@@ -11,7 +11,8 @@ datasource db {
 }
 
 model Game {
-  commit                String @id
+  uid                   String @id
+  commit                String @unique
   player1               String
   player2               String
   player1Choice         Int

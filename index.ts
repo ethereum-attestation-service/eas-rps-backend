@@ -33,11 +33,11 @@ app.post('/newAttestation', async (req, res) => {
         const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
 
         const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
-        console.log(commitHash)
         const player1 = attestation.signer
         const player2 = attestation.sig.message.recipient
         await prisma.game.create({
             data: {
+                uid: attestation.sig.uid,
                 commit: commitHash,
                 player1: player1,
                 player2: player2,
@@ -60,7 +60,7 @@ app.post('/newAttestation', async (req, res) => {
 
         const playersAndChoices = await prisma.game.findUnique({
             where: {
-                commit: gameID
+                uid: gameID
             },
             select: {
                 player1: true,
@@ -70,21 +70,23 @@ app.post('/newAttestation', async (req, res) => {
             }
         })
 
-        if (attestation.attester === playersAndChoices!.player1 &&
+        console.log(attestation)
+
+        if (attestation.signer === playersAndChoices!.player1 &&
             playersAndChoices!.player2Choice != CHOICE_UNKNOWN) {
             await prisma.game.update({
                 where: {
-                    commit: gameID
+                    uid: gameID
                 },
                 data: {
                     player1Choice: revealedChoice,
                     status: (revealedChoice - playersAndChoices!.player2Choice) % 3
                 }
             })
-        } else if (attestation.attester === playersAndChoices!.player2) {
+        } else if (attestation.signer === playersAndChoices!.player2) {
             await prisma.game.update({
                 where: {
-                    commit: gameID
+                    uid: gameID
                 },
                 data: {
                     player2Choice: revealedChoice,
@@ -99,6 +101,32 @@ app.post('/newAttestation', async (req, res) => {
         offchainAttestationId: attestation.sig.uid
     }
     res.json(result)
+})
+
+app.post('/gameStatus', async (req, res) => {
+    const {uid} = req.body
+
+    const game = await prisma.game.findUnique({
+        where: {
+            uid: uid
+        },
+
+    })
+
+    res.json(game)
+})
+
+app.post('/incomingChallenges', async (req, res) => {
+    const {toAddress} = req.body
+
+    const challenges = await prisma.game.findMany({
+        where: {
+            player2: toAddress,
+            player2Choice: CHOICE_UNKNOWN
+        },
+    })
+
+    res.json(challenges)
 })
 
 app.listen(port, () => {
