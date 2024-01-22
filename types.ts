@@ -1,3 +1,6 @@
+import {OffchainAttestationType} from "@ethereum-attestation-service/eas-sdk";
+
+
 export type EASChainConfig = {
   chainId: number;
   chainName: string;
@@ -85,3 +88,4 @@ export type AcceptedChallenge = {
   playerChoice: number;
   opponentChoice: number;
 };
+

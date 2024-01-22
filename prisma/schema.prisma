@@ -11,13 +11,34 @@ datasource db {
 }
 
 model Game {
-  uid                   String @id
-  commit                String @unique
-  player1               String
-  player2               String
-  player1Choice         Int
-  player2Choice         Int
-  player1RevealDeadline Int
-  player2RevealDeadline Int
-  status                Int
+  uid                  String        @id
+  commit               String        @unique
+  player1              String
+  player2              String
+  player1Choice        Int
+  player2Choice        Int
+  status               Int
+  relevantAttestations Attestation[]
+}
+
+model Attestation {
+  uid              String  @id
+  data             String
+  recipient        String
+  attester         String
+  schemaId         String
+  isOffchain       Boolean @default(true)
+  refUID           String
+  signature        String
+  gameUID          String
+  relevantTo       Game    @relation(fields: [gameUID], references: [uid])
+  onChainTimestamp Int     @default(0)
+}
+
+model Player {
+  address String   @id
+  wins    String[]
+  ties    String[]
+  losses  String[]
+  elo     Int      @default(1000)
 }

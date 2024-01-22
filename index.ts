@@ -2,20 +2,17 @@ import express from 'express'
 import axios from "axios";
 import cors from 'cors'
 import bodyParser from "body-parser";
-import {AttestationResult, StoreIPFSActionReturn} from "./types";
+import {StoreIPFSActionReturn} from "./types";
+import verificationMiddleware from './verifyAttestation'
 import {
-    OffchainAttestationVersion,
-    Offchain,
-    PartialTypedDataConfig,
-    EAS,
-    SchemaEncoder
+    SchemaEncoder, AttestationShareablePackageObject
 } from "@ethereum-attestation-service/eas-sdk";
 
 import {PrismaClient, Game} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-import {CHOICE_UNKNOWN, CUSTOM_SCHEMAS, STATUS_UNKNOWN} from "./utils";
+import {CHOICE_UNKNOWN, CUSTOM_SCHEMAS, dbFriendlyAttestation, STATUS_UNKNOWN} from "./utils";
 
 const app = express()
 const port = 8080
@@ -26,8 +23,8 @@ app.use(bodyParser.json());
 app.use(cors())
 
 // note: build in middleware to verify all attestations
-app.post('/newAttestation', async (req, res) => {
-    const attestation = JSON.parse(req.body.textJson)
+app.post('/newAttestation', verificationMiddleware, async (req, res) => {
+    const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
 
     if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
         const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
@@ -43,8 +40,6 @@ app.post('/newAttestation', async (req, res) => {
                 player2: player2,
                 player1Choice: CHOICE_UNKNOWN,
                 player2Choice: CHOICE_UNKNOWN,
-                player1RevealDeadline: 0,
-                player2RevealDeadline: 0,
                 status: STATUS_UNKNOWN
             }
         })
@@ -70,8 +65,6 @@ app.post('/newAttestation', async (req, res) => {
             }
         })
 
-        console.log(attestation)
-
         if (attestation.signer === playersAndChoices!.player1 &&
             playersAndChoices!.player2Choice != CHOICE_UNKNOWN) {
             await prisma.game.update({
@@ -80,7 +73,7 @@ app.post('/newAttestation', async (req, res) => {
                 },
                 data: {
                     player1Choice: revealedChoice,
-                    status: (revealedChoice - playersAndChoices!.player2Choice) % 3
+                    status: (3 + revealedChoice - playersAndChoices!.player2Choice) % 3
                 }
             })
         } else if (attestation.signer === playersAndChoices!.player2) {
@@ -94,6 +87,10 @@ app.post('/newAttestation', async (req, res) => {
             })
         }
     }
+
+    await prisma.attestation.create({
+        data: dbFriendlyAttestation(attestation)
+    })
 
     const result: StoreIPFSActionReturn = {
         error: null,
@@ -110,7 +107,6 @@ app.post('/gameStatus', async (req, res) => {
         where: {
             uid: uid
         },
-
     })
 
     res.json(game)
