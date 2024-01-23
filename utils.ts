@@ -4,8 +4,8 @@ import {AttestationShareablePackageObject} from "@ethereum-attestation-service/e
 export const CUSTOM_SCHEMAS = {
     COMMIT_HASH:
         "0x2328029cfa84b9ea42f4e0e8fa24fbf66da07ceec0a925dd27370b9617b32d59",
-    REVEAL_GAME_CHOICE:
-        "0xd37b0be1e85999415d1a3a1e5706772f477a7798edb520b28462bd29e150509a",
+    CREATE_GAME_CHALLENGE:
+        "0x64b1bac6f531c64a6aa372b1239111fe41a60003dcda62bfa967bc6e4c4d91e0",
 };
 
 export const RPS_GAME_UID =

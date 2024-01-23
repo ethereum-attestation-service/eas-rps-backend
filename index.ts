@@ -5,7 +5,7 @@ import bodyParser from "body-parser";
 import {StoreIPFSActionReturn} from "./types";
 import verificationMiddleware from './verifyAttestation'
 import {
-    SchemaEncoder, AttestationShareablePackageObject
+    SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES, ZERO_BYTES32
 } from "@ethereum-attestation-service/eas-sdk";
 
 import {PrismaClient, Game} from "@prisma/client";
@@ -26,63 +26,54 @@ app.use(cors())
 app.post('/newAttestation', verificationMiddleware, async (req, res) => {
     const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
 
-    if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
-        const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
-
-        const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+    if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
         const player1 = attestation.signer
         const player2 = attestation.sig.message.recipient
         await prisma.game.create({
             data: {
                 uid: attestation.sig.uid,
-                commit: commitHash,
                 player1: player1,
                 player2: player2,
-                player1Choice: CHOICE_UNKNOWN,
-                player2Choice: CHOICE_UNKNOWN,
-                status: STATUS_UNKNOWN
+                commit1: ZERO_BYTES32,
+                commit2: ZERO_BYTES32,
+                choice1: CHOICE_UNKNOWN,
+                choice2: CHOICE_UNKNOWN,
+                salt1: ZERO_BYTES32,
+                salt2: ZERO_BYTES32,
             }
         })
-        console.log('created')
-    } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.REVEAL_GAME_CHOICE) {
+    } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
+        const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
+
+        const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
         const gameID = attestation.sig.message.refUID;
 
-        const schemaEncoder = new SchemaEncoder(
-            "uint256 revealGameChoice,bytes32 salt,bytes32 commitUID"
-        );
-
-        const revealedChoice = JSON.parse(((schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value).toString());
-
-        const playersAndChoices = await prisma.game.findUnique({
-            where: {
-                uid: gameID
-            },
+        const players = await prisma.game.findUnique({
             select: {
                 player1: true,
                 player2: true,
-                player1Choice: true,
-                player2Choice: true,
+            },
+            where: {
+                uid: gameID
             }
         })
 
-        if (attestation.signer === playersAndChoices!.player1 &&
-            playersAndChoices!.player2Choice != CHOICE_UNKNOWN) {
+        if (attestation.signer === players!.player1) {
             await prisma.game.update({
                 where: {
-                    uid: gameID
+                    uid: gameID,
                 },
                 data: {
-                    player1Choice: revealedChoice,
-                    status: (3 + revealedChoice - playersAndChoices!.player2Choice) % 3
+                    commit1: commitHash
                 }
             })
-        } else if (attestation.signer === playersAndChoices!.player2) {
+        } else if (attestation.signer === players!.player2) {
             await prisma.game.update({
                 where: {
-                    uid: gameID
+                    uid: gameID,
                 },
                 data: {
-                    player2Choice: revealedChoice,
+                    commit2: commitHash
                 }
             })
         }
@@ -118,7 +109,7 @@ app.post('/incomingChallenges', async (req, res) => {
     const challenges = await prisma.game.findMany({
         where: {
             player2: toAddress,
-            player2Choice: CHOICE_UNKNOWN
+            commit2: ZERO_BYTES32
         },
     })
 

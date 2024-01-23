@@ -12,12 +12,14 @@ datasource db {
 
 model Game {
   uid                  String        @id
-  commit               String        @unique
+  commit1              String
+  commit2              String
   player1              String
   player2              String
-  player1Choice        Int
-  player2Choice        Int
-  status               Int
+  choice1              Int
+  choice2              Int
+  salt1                String
+  salt2                String
   relevantAttestations Attestation[]
 }
 
