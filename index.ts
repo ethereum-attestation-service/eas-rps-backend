@@ -13,8 +13,8 @@ import {PrismaClient, Game} from "@prisma/client";
 const prisma = new PrismaClient();
 
 import {
-  addFinishedGameToPlayerResults,
   CHOICE_UNKNOWN,
+  createPlayerIfNonexistent,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
   STATUS_UNKNOWN
@@ -36,11 +36,30 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
   if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
     const player1 = attestation.signer
     const player2 = attestation.sig.message.recipient
+
     await prisma.game.create({
       data: {
         uid: attestation.sig.uid,
-        player1: player1,
-        player2: player2,
+        player1Object: {
+          connectOrCreate: {
+            where: {
+              address: player1
+            },
+            create: {
+              address: player1
+            }
+          }
+        },
+        player2Object: {
+          connectOrCreate: {
+            where: {
+              address: player2
+            },
+            create: {
+              address: player2
+            }
+          }
+        },
         commit1: ZERO_BYTES32,
         commit2: ZERO_BYTES32,
         choice1: CHOICE_UNKNOWN,
@@ -214,10 +233,6 @@ app.post('/revealMany', async (req, res) => {
           salt1: reveal.salt,
         }
       })
-      if (game.choice2 !== CHOICE_UNKNOWN) {
-        // add logic to disallow duplicate results
-        await addFinishedGameToPlayerResults(game, choice, game.choice2);
-      }
     } else if (hashedChoice === game.commit2) {
       await prisma.game.update({
         where: {
@@ -228,10 +243,6 @@ app.post('/revealMany', async (req, res) => {
           salt2: reveal.salt,
         }
       })
-      if (game.choice1 !== CHOICE_UNKNOWN) {
-        // add logic to disallow duplicate results
-        await addFinishedGameToPlayerResults(game, game.choice1, choice);
-      }
     }
   }
 

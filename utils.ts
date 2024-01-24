@@ -42,58 +42,14 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
   }
 }
 
-export async function addFinishedGameToPlayerResults(game: Game, choice1: number, choice2: number) {
-  // create Player for player 1 if doesnt exist already
+export async function createPlayerIfNonexistent(address:string) {
   await prisma.player.upsert({
     where: {
-      address: game.player1
+      address: address
     },
     update: {},
     create: {
-      address: game.player1,
-      results: {
-        create: []
-      }
+      address: address
     }
-  });
-
-  // create Player for player 2 if doesnt exist already
-  await prisma.player.upsert({
-    where: {
-      address: game.player2
-    },
-    update: {},
-    create: {
-      address: game.player2,
-      results: {
-        create: []
-      }
-    }
-  });
-
-  await prisma.result.create({
-    data: {
-      player: {
-        connect: {
-          address: game.player1
-        }
-      },
-      gameUID: game.uid,
-      status: (3 + choice1 - choice2) % 3,
-      timestamp: 0
-    }
-  });
-
-  await prisma.result.create({
-    data: {
-      player: {
-        connect: {
-          address: game.player2
-        }
-      },
-      gameUID: game.uid,
-      status: (3 + choice2 - choice1) % 3,
-      timestamp: 0
-    }
-  });
+  })
 }

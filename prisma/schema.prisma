@@ -14,6 +14,8 @@ model Game {
   uid                  String        @id
   commit1              String
   commit2              String
+  player1Object        Player        @relation("player1Relation", fields: [player1], references: [address])
+  player2Object        Player        @relation("player2Relation", fields: [player2], references: [address])
   player1              String
   player2              String
   choice1              Int
@@ -39,17 +41,8 @@ model Attestation {
 }
 
 model Player {
-  address String   @id
-  results Result[]
-  elo     Int      @default(1000)
-}
-
-model Result {
-  status        Int
-  player        Player @relation(fields: [playerAddress], references: [address])
-  playerAddress String
-  gameUID       String
-  timestamp     Int
-
-  @@id([gameUID, playerAddress])
+  address              String @id
+  gamesPlayedAsPlayer1 Game[] @relation("player1Relation")
+  gamesPlayedAsPlayer2 Game[] @relation("player2Relation")
+  elo                  Int    @default(1000)
 }
