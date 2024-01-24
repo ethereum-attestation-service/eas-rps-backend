@@ -66,15 +66,7 @@ export async function verifyOffchainAttestation(
 export default async function (req: any, res: any, next: any) {
     const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
     if (await verifyOffchainAttestation(attestation)) {
-        if (await prisma.player.findUnique({
-            where: {
-                address: attestation.signer
-            }
-        })) {
-            next()
-        } else {
-            res.send('player not verified')
-        }
+        next()
     } else {
         res.send('Attestation not verified')
     }
