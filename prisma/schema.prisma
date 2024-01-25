@@ -24,6 +24,7 @@ model Game {
   salt2                String
   relevantAttestations Attestation[]
   declined             Boolean       @default(false)
+  updatedAt            Int           @default(0)
 }
 
 model Attestation {

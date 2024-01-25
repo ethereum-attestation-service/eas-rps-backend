@@ -7,6 +7,7 @@ import verificationMiddleware from './verifyAttestation'
 import {
   SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES, ZERO_BYTES32
 } from "@ethereum-attestation-service/eas-sdk";
+import dayjs from "dayjs";
 
 import {PrismaClient, Game} from "@prisma/client";
 
@@ -90,7 +91,8 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           uid: gameID,
         },
         data: {
-          commit1: commitHash
+          commit1: commitHash,
+          updatedAt: dayjs().unix(),
         }
       })
     } else if (attestation.signer === players!.player2) {
@@ -99,7 +101,8 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           uid: gameID,
         },
         data: {
-          commit2: commitHash
+          commit2: commitHash,
+          updatedAt: dayjs().unix(),
         }
       })
     }
@@ -126,7 +129,8 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
           uid: gameID,
         },
         data: {
-          declined: true
+          declined: true,
+          updatedAt: dayjs().unix(),
         }
       })
     }
@@ -157,15 +161,15 @@ app.post('/gameStatus', async (req, res) => {
 })
 
 app.post('/incomingChallenges', async (req, res) => {
-  const {toAddress} = req.body
+  const {address}: {address: string} = req.body
 
   const challenges = await prisma.game.findMany({
     where: {
-      player2: toAddress,
+      player2: address,
       commit2: ZERO_BYTES32,
       declined: false,
     },
-  })
+  });
 
   res.json(challenges)
 })
@@ -231,6 +235,7 @@ app.post('/revealMany', async (req, res) => {
         data: {
           choice1: reveal.choice,
           salt1: reveal.salt,
+          updatedAt: dayjs().unix(),
         }
       })
     } else if (hashedChoice === game.commit2) {
@@ -241,6 +246,7 @@ app.post('/revealMany', async (req, res) => {
         data: {
           choice2: reveal.choice,
           salt2: reveal.salt,
+          updatedAt: dayjs().unix(),
         }
       })
     }
@@ -250,26 +256,27 @@ app.post('/revealMany', async (req, res) => {
   res.json({})
 })
 
-app.post('/myGames', async (req, res) => {
+app.post('/myStats', async (req, res) => {
   const {address} = req.body
-
-  const active = await prisma.game.findMany({
+  const myStats = await prisma.player.findUnique({
     where: {
-      OR: [
-        {
-          player1: address,
-          choice2: CHOICE_UNKNOWN,
-        },
-        {
-          player2: address,
-          choice1: CHOICE_UNKNOWN,
-        }
-      ],
-      declined: false,
+      address: address
     },
+    include:{
+      gamesPlayedAsPlayer1: true,
+      gamesPlayedAsPlayer2: true,
+    }
   });
 
-  res.json(active)
+  if (!myStats) {
+    return
+  }
+
+  const player1Games = myStats.gamesPlayedAsPlayer1.filter((game) => !game.declined)
+  const player2Games = myStats.gamesPlayedAsPlayer2.filter((game) => !game.declined)
+
+  const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
+  res.json({games: games, elo: myStats.elo});
 })
 
 app.listen(port, () => {
