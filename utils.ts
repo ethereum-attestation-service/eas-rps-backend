@@ -1,7 +1,6 @@
 import {Attestation, Game, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject} from "@ethereum-attestation-service/eas-sdk";
 
-const prisma = new PrismaClient();
 export const CUSTOM_SCHEMAS = {
   COMMIT_HASH:
     "0x2328029cfa84b9ea42f4e0e8fa24fbf66da07ceec0a925dd27370b9617b32d59",
@@ -42,14 +41,4 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
   }
 }
 
-export async function createPlayerIfNonexistent(address:string) {
-  await prisma.player.upsert({
-    where: {
-      address: address
-    },
-    update: {},
-    create: {
-      address: address
-    }
-  })
-}
+

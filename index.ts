@@ -9,13 +9,12 @@ import {
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
 
-import {PrismaClient, Game} from "@prisma/client";
+import {PrismaClient, Game, Link} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 import {
   CHOICE_UNKNOWN,
-  createPlayerIfNonexistent,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
   STATUS_UNKNOWN
@@ -37,6 +36,31 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
   if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
     const player1 = attestation.signer
     const player2 = attestation.sig.message.recipient
+    const existingLink = await prisma.link.findUnique({
+      where: {
+        player1_player2: {
+          player1: player1,
+          player2: player2,
+        }
+      }
+    });
+
+    if (!existingLink) {
+      await prisma.link.createMany({
+        data: [
+          {
+            player1: player1,
+            player2: player2,
+            default: true,
+          },
+          {
+            player1: player2,
+            player2: player1,
+            default: false,
+          }
+        ]
+      })
+    }
 
     await prisma.game.create({
       data: {
@@ -67,6 +91,14 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         choice2: CHOICE_UNKNOWN,
         salt1: ZERO_BYTES32,
         salt2: ZERO_BYTES32,
+        link: {
+          connect: {
+            player1_player2: {
+              player1: player1,
+              player2: player2,
+            }
+          }
+        }
       }
     })
   } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
@@ -161,7 +193,7 @@ app.post('/gameStatus', async (req, res) => {
 })
 
 app.post('/incomingChallenges', async (req, res) => {
-  const {address}: {address: string} = req.body
+  const {address}: { address: string } = req.body
 
   const challenges = await prisma.game.findMany({
     where: {
@@ -262,7 +294,7 @@ app.post('/myStats', async (req, res) => {
     where: {
       address: address
     },
-    include:{
+    include: {
       gamesPlayedAsPlayer1: true,
       gamesPlayedAsPlayer2: true,
     }
@@ -277,6 +309,50 @@ app.post('/myStats', async (req, res) => {
 
   const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
   res.json({games: games, elo: myStats.elo});
+});
+
+app.post('/getGraph', async (req, res) => {
+  const links = await prisma.link.findMany({
+    where: {
+      default: true,
+    },
+    include: {
+      opposite: {
+        include: {
+          gamesPlayed: {
+            select: {
+              uid: true,
+              updatedAt: true,
+            }
+          },
+        }
+      },
+      gamesPlayed: {
+        select: {
+          uid: true,
+          updatedAt: true,
+        }
+      },
+    }
+  });
+
+
+  res.json({
+    nodes: [...new Set(links.map((link) => link.player1)
+      .concat(links.map((link) => link.player2)))]
+      .map((address) => ({
+        id: address,
+        group: 1,
+      }))
+    , links: links.map((link) => ({
+      source: link.player1,
+      target: link.player2,
+      games: link.gamesPlayed
+        .concat(link.opposite.gamesPlayed)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((game) => game.uid),
+    }))
+  })
 })
 
 app.listen(port, () => {

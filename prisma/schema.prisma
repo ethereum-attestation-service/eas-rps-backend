@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -25,6 +25,7 @@ model Game {
   relevantAttestations Attestation[]
   declined             Boolean       @default(false)
   updatedAt            Int           @default(0)
+  link                 Link          @relation(fields: [player1, player2], references: [player1, player2])
 }
 
 model Attestation {
@@ -46,4 +47,15 @@ model Player {
   gamesPlayedAsPlayer1 Game[] @relation("player1Relation")
   gamesPlayedAsPlayer2 Game[] @relation("player2Relation")
   elo                  Int    @default(1000)
+}
+
+model Link {
+  player1         String
+  player2         String
+  gamesPlayed     Game[]
+  opposite        Link    @relation("opposite", fields: [player1, player2], references: [player2, player1])
+  oppositeReverse Link?   @relation("opposite")
+  default         Boolean
+
+  @@id([player1, player2])
 }
