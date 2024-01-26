@@ -37,7 +37,8 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
     schemaId: attestation.sig.message.schema,
     signature: JSON.stringify(attestation.sig.signature),
     gameUID: attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE ? attestation.sig.uid : attestation.sig.message.refUID,
-    onChainTimestamp: 0
+    onChainTimestamp: 0,
+    packageObjString: JSON.stringify(attestation),
   }
 }
 

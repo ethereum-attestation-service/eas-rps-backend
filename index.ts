@@ -187,6 +187,13 @@ app.post('/gameStatus', async (req, res) => {
     where: {
       uid: uid
     },
+    include: {
+      relevantAttestations: {
+        select: {
+          packageObjString: true,
+        }
+      }
+    }
   })
 
   res.json(game)
@@ -311,6 +318,19 @@ app.post('/myStats', async (req, res) => {
   res.json({games: games, elo: myStats.elo});
 });
 
+
+const graphGameFilter = {
+  select: {
+    uid: true,
+    updatedAt: true,
+    declined: true,
+    choice1: true,
+    choice2: true,
+  },
+  where: {
+    declined: false,
+  }
+};
 app.post('/getGraph', async (req, res) => {
   const links = await prisma.link.findMany({
     where: {
@@ -319,21 +339,11 @@ app.post('/getGraph', async (req, res) => {
     include: {
       opposite: {
         include: {
-          gamesPlayed: {
-            select: {
-              uid: true,
-              updatedAt: true,
-            }
-          },
+          gamesPlayed: graphGameFilter,
         }
       },
-      gamesPlayed: {
-        select: {
-          uid: true,
-          updatedAt: true,
-        }
-      },
-    }
+      gamesPlayed: graphGameFilter,
+    },
   });
 
 
@@ -350,8 +360,10 @@ app.post('/getGraph', async (req, res) => {
       games: link.gamesPlayed
         .concat(link.opposite.gamesPlayed)
         .sort((a, b) => b.updatedAt - a.updatedAt)
+        .filter((game) => game.choice1 !== CHOICE_UNKNOWN && game.choice2 !== CHOICE_UNKNOWN)
         .map((game) => game.uid),
     }))
+      .filter(link => link.games.length > 0)
   })
 })
 

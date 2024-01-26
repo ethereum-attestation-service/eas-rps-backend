@@ -35,12 +35,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 var express_1 = require("express");
 var cors_1 = require("cors");
 var body_parser_1 = require("body-parser");
 var verifyAttestation_1 = require("./verifyAttestation");
 var eas_sdk_1 = require("@ethereum-attestation-service/eas-sdk");
+var dayjs_1 = require("dayjs");
 var client_1 = require("@prisma/client");
 var prisma = new client_1.PrismaClient();
 var utils_1 = require("./utils");
@@ -52,50 +62,86 @@ app.use(body_parser_1.default.json());
 app.use((0, cors_1.default)());
 // note: build in middleware to verify all attestations
 app.post('/newAttestation', verifyAttestation_1.default, function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var attestation, player1, player2, schemaEncoder, commitHash, gameID, players, gameID, players, result;
+    var attestation, player1, player2, existingLink, schemaEncoder, commitHash, gameID, players, gameID, players, result;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
                 attestation = JSON.parse(req.body.textJson);
-                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE)) return [3 /*break*/, 2];
+                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE)) return [3 /*break*/, 5];
                 player1 = attestation.signer;
                 player2 = attestation.sig.message.recipient;
-                return [4 /*yield*/, prisma.game.create({
-                        data: {
-                            uid: attestation.sig.uid,
-                            player1Object: {
-                                connectOrCreate: {
-                                    where: {
-                                        address: player1
-                                    },
-                                    create: {
-                                        address: player1
-                                    }
-                                }
-                            },
-                            player2Object: {
-                                connectOrCreate: {
-                                    where: {
-                                        address: player2
-                                    },
-                                    create: {
-                                        address: player2
-                                    }
-                                }
-                            },
-                            commit1: eas_sdk_1.ZERO_BYTES32,
-                            commit2: eas_sdk_1.ZERO_BYTES32,
-                            choice1: utils_1.CHOICE_UNKNOWN,
-                            choice2: utils_1.CHOICE_UNKNOWN,
-                            salt1: eas_sdk_1.ZERO_BYTES32,
-                            salt2: eas_sdk_1.ZERO_BYTES32,
+                return [4 /*yield*/, prisma.link.findUnique({
+                        where: {
+                            player1_player2: {
+                                player1: player1,
+                                player2: player2,
+                            }
                         }
                     })];
             case 1:
-                _a.sent();
-                return [3 /*break*/, 11];
+                existingLink = _a.sent();
+                if (!!existingLink) return [3 /*break*/, 3];
+                return [4 /*yield*/, prisma.link.createMany({
+                        data: [
+                            {
+                                player1: player1,
+                                player2: player2,
+                                default: true,
+                            },
+                            {
+                                player1: player2,
+                                player2: player1,
+                                default: false,
+                            }
+                        ]
+                    })];
             case 2:
-                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.COMMIT_HASH)) return [3 /*break*/, 8];
+                _a.sent();
+                _a.label = 3;
+            case 3: return [4 /*yield*/, prisma.game.create({
+                    data: {
+                        uid: attestation.sig.uid,
+                        player1Object: {
+                            connectOrCreate: {
+                                where: {
+                                    address: player1
+                                },
+                                create: {
+                                    address: player1
+                                }
+                            }
+                        },
+                        player2Object: {
+                            connectOrCreate: {
+                                where: {
+                                    address: player2
+                                },
+                                create: {
+                                    address: player2
+                                }
+                            }
+                        },
+                        commit1: eas_sdk_1.ZERO_BYTES32,
+                        commit2: eas_sdk_1.ZERO_BYTES32,
+                        choice1: utils_1.CHOICE_UNKNOWN,
+                        choice2: utils_1.CHOICE_UNKNOWN,
+                        salt1: eas_sdk_1.ZERO_BYTES32,
+                        salt2: eas_sdk_1.ZERO_BYTES32,
+                        link: {
+                            connect: {
+                                player1_player2: {
+                                    player1: player1,
+                                    player2: player2,
+                                }
+                            }
+                        }
+                    }
+                })];
+            case 4:
+                _a.sent();
+                return [3 /*break*/, 14];
+            case 5:
+                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.COMMIT_HASH)) return [3 /*break*/, 11];
                 schemaEncoder = new eas_sdk_1.SchemaEncoder("bytes32 commitHash");
                 commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
                 gameID = attestation.sig.message.refUID;
@@ -108,36 +154,38 @@ app.post('/newAttestation', verifyAttestation_1.default, function (req, res) { r
                             uid: gameID
                         }
                     })];
-            case 3:
-                players = _a.sent();
-                if (!(attestation.signer === players.player1)) return [3 /*break*/, 5];
-                return [4 /*yield*/, prisma.game.update({
-                        where: {
-                            uid: gameID,
-                        },
-                        data: {
-                            commit1: commitHash
-                        }
-                    })];
-            case 4:
-                _a.sent();
-                return [3 /*break*/, 7];
-            case 5:
-                if (!(attestation.signer === players.player2)) return [3 /*break*/, 7];
-                return [4 /*yield*/, prisma.game.update({
-                        where: {
-                            uid: gameID,
-                        },
-                        data: {
-                            commit2: commitHash
-                        }
-                    })];
             case 6:
+                players = _a.sent();
+                if (!(attestation.signer === players.player1)) return [3 /*break*/, 8];
+                return [4 /*yield*/, prisma.game.update({
+                        where: {
+                            uid: gameID,
+                        },
+                        data: {
+                            commit1: commitHash,
+                            updatedAt: (0, dayjs_1.default)().unix(),
+                        }
+                    })];
+            case 7:
                 _a.sent();
-                _a.label = 7;
-            case 7: return [3 /*break*/, 11];
+                return [3 /*break*/, 10];
             case 8:
-                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE)) return [3 /*break*/, 11];
+                if (!(attestation.signer === players.player2)) return [3 /*break*/, 10];
+                return [4 /*yield*/, prisma.game.update({
+                        where: {
+                            uid: gameID,
+                        },
+                        data: {
+                            commit2: commitHash,
+                            updatedAt: (0, dayjs_1.default)().unix(),
+                        }
+                    })];
+            case 9:
+                _a.sent();
+                _a.label = 10;
+            case 10: return [3 /*break*/, 14];
+            case 11:
+                if (!(attestation.sig.message.schema === utils_1.CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE)) return [3 /*break*/, 14];
                 gameID = attestation.sig.message.refUID;
                 return [4 /*yield*/, prisma.game.findUnique({
                         select: {
@@ -148,27 +196,28 @@ app.post('/newAttestation', verifyAttestation_1.default, function (req, res) { r
                             commit2: eas_sdk_1.ZERO_BYTES32,
                         }
                     })];
-            case 9:
+            case 12:
                 players = _a.sent();
                 if (!players) {
                     return [2 /*return*/];
                 }
-                if (!(attestation.signer === players.player2)) return [3 /*break*/, 11];
+                if (!(attestation.signer === players.player2)) return [3 /*break*/, 14];
                 return [4 /*yield*/, prisma.game.update({
                         where: {
                             uid: gameID,
                         },
                         data: {
-                            declined: true
+                            declined: true,
+                            updatedAt: (0, dayjs_1.default)().unix(),
                         }
                     })];
-            case 10:
+            case 13:
                 _a.sent();
-                _a.label = 11;
-            case 11: return [4 /*yield*/, prisma.attestation.create({
+                _a.label = 14;
+            case 14: return [4 /*yield*/, prisma.attestation.create({
                     data: (0, utils_1.dbFriendlyAttestation)(attestation)
                 })];
-            case 12:
+            case 15:
                 _a.sent();
                 result = {
                     error: null,
@@ -190,6 +239,13 @@ app.post('/gameStatus', function (req, res) { return __awaiter(void 0, void 0, v
                         where: {
                             uid: uid
                         },
+                        include: {
+                            relevantAttestations: {
+                                select: {
+                                    packageObjString: true,
+                                }
+                            }
+                        }
                     })];
             case 1:
                 game = _a.sent();
@@ -199,14 +255,14 @@ app.post('/gameStatus', function (req, res) { return __awaiter(void 0, void 0, v
     });
 }); });
 app.post('/incomingChallenges', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var toAddress, challenges;
+    var address, challenges;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
-                toAddress = req.body.toAddress;
+                address = req.body.address;
                 return [4 /*yield*/, prisma.game.findMany({
                         where: {
-                            player2: toAddress,
+                            player2: address,
                             commit2: eas_sdk_1.ZERO_BYTES32,
                             declined: false,
                         },
@@ -285,6 +341,7 @@ app.post('/revealMany', function (req, res) { return __awaiter(void 0, void 0, v
                         data: {
                             choice1: reveal.choice,
                             salt1: reveal.salt,
+                            updatedAt: (0, dayjs_1.default)().unix(),
                         }
                     })];
             case 3:
@@ -299,6 +356,7 @@ app.post('/revealMany', function (req, res) { return __awaiter(void 0, void 0, v
                         data: {
                             choice2: reveal.choice,
                             salt2: reveal.salt,
+                            updatedAt: (0, dayjs_1.default)().unix(),
                         }
                     })];
             case 5:
@@ -313,30 +371,78 @@ app.post('/revealMany', function (req, res) { return __awaiter(void 0, void 0, v
         }
     });
 }); });
-app.post('/myGames', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var address, active;
+app.post('/myStats', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var address, myStats, player1Games, player2Games, games;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
                 address = req.body.address;
-                return [4 /*yield*/, prisma.game.findMany({
+                return [4 /*yield*/, prisma.player.findUnique({
                         where: {
-                            OR: [
-                                {
-                                    player1: address,
-                                    choice2: utils_1.CHOICE_UNKNOWN,
-                                },
-                                {
-                                    player2: address,
-                                    choice1: utils_1.CHOICE_UNKNOWN,
-                                }
-                            ],
-                            declined: false,
+                            address: address
                         },
+                        include: {
+                            gamesPlayedAsPlayer1: true,
+                            gamesPlayedAsPlayer2: true,
+                        }
                     })];
             case 1:
-                active = _a.sent();
-                res.json(active);
+                myStats = _a.sent();
+                if (!myStats) {
+                    return [2 /*return*/];
+                }
+                player1Games = myStats.gamesPlayedAsPlayer1.filter(function (game) { return !game.declined; });
+                player2Games = myStats.gamesPlayedAsPlayer2.filter(function (game) { return !game.declined; });
+                games = player1Games.concat(player2Games).sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+                res.json({ games: games, elo: myStats.elo });
+                return [2 /*return*/];
+        }
+    });
+}); });
+app.post('/getGraph', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
+    var links;
+    return __generator(this, function (_a) {
+        switch (_a.label) {
+            case 0: return [4 /*yield*/, prisma.link.findMany({
+                    where: {
+                        default: true,
+                    },
+                    include: {
+                        opposite: {
+                            include: {
+                                gamesPlayed: {
+                                    select: {
+                                        uid: true,
+                                        updatedAt: true,
+                                    }
+                                },
+                            }
+                        },
+                        gamesPlayed: {
+                            select: {
+                                uid: true,
+                                updatedAt: true,
+                            }
+                        },
+                    }
+                })];
+            case 1:
+                links = _a.sent();
+                res.json({
+                    nodes: __spreadArray([], new Set(links.map(function (link) { return link.player1; })
+                        .concat(links.map(function (link) { return link.player2; }))), true).map(function (address) { return ({
+                        id: address,
+                        group: 1,
+                    }); }),
+                    links: links.map(function (link) { return ({
+                        source: link.player1,
+                        target: link.player2,
+                        games: link.gamesPlayed
+                            .concat(link.opposite.gamesPlayed)
+                            .sort(function (a, b) { return b.updatedAt - a.updatedAt; })
+                            .map(function (game) { return game.uid; }),
+                    }); })
+                });
                 return [2 /*return*/];
         }
     });
