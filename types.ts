@@ -1,4 +1,5 @@
 import {OffchainAttestationType} from "@ethereum-attestation-service/eas-sdk";
+import {Game, Player} from "@prisma/client";
 
 
 export type EASChainConfig = {
@@ -89,3 +90,7 @@ export type AcceptedChallenge = {
   opponentChoice: number;
 };
 
+export type GameWithPlayers = Game & {
+  player1Object: Player;
+  player2Object: Player;
+};

@@ -23,10 +23,14 @@ model Game {
   choice2              Int
   salt1                String
   salt2                String
+  eloChange1           Int           @default(0)
+  eloChange2           Int           @default(0)
   relevantAttestations Attestation[]
   declined             Boolean       @default(false)
   updatedAt            Int           @default(0)
   link                 Link          @relation(fields: [player1, player2], references: [player1, player2])
+  abandoned            Boolean       @default(false)
+  finalized            Boolean       @default(false)
 }
 
 model Attestation {

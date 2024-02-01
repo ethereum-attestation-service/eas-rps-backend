@@ -14,6 +14,7 @@ import {PrismaClient, Game, Link} from "@prisma/client";
 const prisma = new PrismaClient();
 
 import {
+  updateEloChangeIfApplicable,
   CHOICE_UNKNOWN,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
@@ -251,10 +252,14 @@ app.post('/revealMany', async (req, res) => {
   for (const reveal of reveals) {
     const {uid, choice, salt} = reveal
 
-    const game = await prisma.game.findUnique({
+    let game = await prisma.game.findUnique({
       where: {
         uid: uid
       },
+      include:{
+        player1Object: true,
+        player2Object: true,
+      }
     })
 
     if (!game) {
@@ -267,32 +272,29 @@ app.post('/revealMany', async (req, res) => {
     );
 
     if (hashedChoice === game.commit1) {
-      await prisma.game.update({
-        where: {
-          uid: reveal.uid
-        },
-        data: {
-          choice1: reveal.choice,
-          salt1: reveal.salt,
-          updatedAt: dayjs().unix(),
-        }
-      })
+      game.choice1 = choice
+      game.salt1 = salt
     } else if (hashedChoice === game.commit2) {
-      await prisma.game.update({
-        where: {
-          uid: reveal.uid
-        },
-        data: {
-          choice2: reveal.choice,
-          salt2: reveal.salt,
-          updatedAt: dayjs().unix(),
-        }
-      })
+      game.choice2 = choice
+      game.salt2 = salt
     }
 
-    
-  }
+    const {eloChange1,eloChange2} = await updateEloChangeIfApplicable(game);
 
+
+    await prisma.game.update({
+      where: {
+        uid: reveal.uid
+      },
+      data: {
+        choice1: game.choice1,
+        choice2: game.choice2,
+        salt1: game.salt1,
+        salt2: game.salt2,
+        eloChange1: game.eloChange1,
+      }
+    })
+  }
 
   res.json({})
 })
@@ -304,8 +306,16 @@ app.post('/myStats', async (req, res) => {
       address: address
     },
     include: {
-      gamesPlayedAsPlayer1: true,
-      gamesPlayedAsPlayer2: true,
+      gamesPlayedAsPlayer1: {
+        where:{
+          declined: false
+        }
+      },
+      gamesPlayedAsPlayer2: {
+        where:{
+          declined: false
+        }
+      },
     }
   });
 
@@ -313,8 +323,8 @@ app.post('/myStats', async (req, res) => {
     return
   }
 
-  const player1Games = myStats.gamesPlayedAsPlayer1.filter((game) => !game.declined)
-  const player2Games = myStats.gamesPlayedAsPlayer2.filter((game) => !game.declined)
+  const player1Games = myStats.gamesPlayedAsPlayer1
+  const player2Games = myStats.gamesPlayedAsPlayer2
 
   const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
   res.json({games: games, elo: myStats.elo});

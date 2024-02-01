@@ -1,5 +1,8 @@
-import {Attestation, Game, PrismaClient} from "@prisma/client";
+import {Attestation, Game, Player, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject} from "@ethereum-attestation-service/eas-sdk";
+import {GameWithPlayers} from "./types";
+
+const prisma = new PrismaClient();
 
 export const CUSTOM_SCHEMAS = {
   COMMIT_HASH:
@@ -43,3 +46,73 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
 }
 
 
+function calculateEloScore(player1Elo: number, player2Elo: number, result: number): [number, number] {
+  const K = 32; // The maximum points that can be gained or lost
+  const R1 = Math.pow(10, player1Elo / 400);
+  const R2 = Math.pow(10, player2Elo / 400);
+
+  // Expected scores
+  const E1 = R1 / (R1 + R2);
+  const E2 = R2 / (R1 + R2);
+
+  let S1, S2;
+
+  switch (result) {
+    case STATUS_PLAYER1_WIN:
+      // If player1 wins, S1 is 1, S2 is 0
+      S1 = 1;
+      S2 = 0;
+      break;
+    case STATUS_PLAYER2_WIN:
+      // If player1 loses, S1 is 0, S2 is 1
+      S1 = 0;
+      S2 = 1;
+      break;
+    case STATUS_DRAW:
+      // If it's a draw, S1 and S2 are 0.5
+      S1 = 0.5;
+      S2 = 0.5;
+      break;
+  }
+
+  // if (typeof S1 === "undefined" || typeof S2 === "undefined") throw new Error("Invalid result");
+  // New Elo rating calculation
+  const newElo1 = player1Elo + K * (S1! - E1);
+  const newElo2 = player2Elo + K * (S2! - E2);
+
+  return [Math.round(newElo1), Math.round(newElo2)];
+}
+
+export function getGameStatus(game: Game) {
+  if (game.choice1 === CHOICE_UNKNOWN || game.choice2 === CHOICE_UNKNOWN) {
+    return STATUS_UNKNOWN;
+  }
+  return (3 + game.choice1 - game.choice2) % 3;
+}
+
+export async function updateEloChangeIfApplicable(game: GameWithPlayers): Promise<[number, number]> {
+  const elo1 = game.player1Object.elo;
+  const elo2 = game.player2Object.elo;
+  const gameStatus = getGameStatus(game);
+  if (gameStatus === STATUS_UNKNOWN) return [0, 0];
+  const [newElo1, newElo2] = calculateEloScore(elo1, elo2, gameStatus);
+  await prisma.player.update({
+    where: {
+      address: game.player1Object.address,
+    },
+    data: {
+      elo: newElo1,
+    },
+  });
+
+  await prisma.player.update({
+    where: {
+      address: game.player2Object.address,
+    },
+    data: {
+      elo: newElo2,
+    },
+  });
+
+  return [newElo1 - elo1, newElo2 - elo2]
+}
