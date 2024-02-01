@@ -12,6 +12,7 @@ datasource db {
 
 model Game {
   uid                  String        @id
+  stakes               String        @default("")
   commit1              String
   commit2              String
   player1Object        Player        @relation("player1Relation", fields: [player1], references: [address])
