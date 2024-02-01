@@ -256,7 +256,7 @@ app.post('/revealMany', async (req, res) => {
       where: {
         uid: uid
       },
-      include:{
+      include: {
         player1Object: true,
         player2Object: true,
       }
@@ -279,7 +279,7 @@ app.post('/revealMany', async (req, res) => {
       game.salt2 = salt
     }
 
-    const {eloChange1,eloChange2} = await updateEloChangeIfApplicable(game);
+    const [eloChange1, eloChange2] = await updateEloChangeIfApplicable(game);
 
 
     await prisma.game.update({
@@ -291,7 +291,8 @@ app.post('/revealMany', async (req, res) => {
         choice2: game.choice2,
         salt1: game.salt1,
         salt2: game.salt2,
-        eloChange1: game.eloChange1,
+        eloChange1: eloChange1,
+        eloChange2: eloChange2,
       }
     })
   }
@@ -307,12 +308,12 @@ app.post('/myStats', async (req, res) => {
     },
     include: {
       gamesPlayedAsPlayer1: {
-        where:{
+        where: {
           declined: false
         }
       },
       gamesPlayedAsPlayer2: {
-        where:{
+        where: {
           declined: false
         }
       },
