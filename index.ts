@@ -18,7 +18,7 @@ import {
   CHOICE_UNKNOWN,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
-  STATUS_UNKNOWN
+  STATUS_UNKNOWN, RPS_GAME_UID, getGameStatus, STATUS_PLAYER1_WIN, STATUS_PLAYER2_WIN
 } from "./utils";
 import {ethers} from 'ethers';
 
@@ -35,6 +35,14 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
   const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
 
   if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
+    if (attestation.sig.message.refUID !== RPS_GAME_UID) {
+      return
+    }
+
+    const schemaEncoder = new SchemaEncoder("string stakes");
+    console.log(schemaEncoder.decodeData(attestation.sig.message.data))
+    const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+
     const player1 = attestation.signer
     const player2 = attestation.sig.message.recipient
     const existingLink = await prisma.link.findUnique({
@@ -92,6 +100,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         choice2: CHOICE_UNKNOWN,
         salt1: ZERO_BYTES32,
         salt2: ZERO_BYTES32,
+        stakes: stakes,
         link: {
           connect: {
             player1_player2: {
@@ -193,13 +202,22 @@ app.post('/gameStatus', async (req, res) => {
         select: {
           packageObjString: true,
         }
-      }
+      },
+      player1Object: true,
+      player2Object: true,
     }
   })
 
   res.json(game)
 })
 
+const finalizedGamesFilter = {
+  gamesPlayed: {
+    where: {
+      finalized: true
+    }
+  },
+}
 app.post('/incomingChallenges', async (req, res) => {
   const {address}: { address: string } = req.body
 
@@ -209,10 +227,55 @@ app.post('/incomingChallenges', async (req, res) => {
       commit2: ZERO_BYTES32,
       declined: false,
     },
+    include: {
+      link: {
+        include: {
+          ...finalizedGamesFilter,
+          opposite: {
+            include: finalizedGamesFilter,
+          }
+        }
+      },
+      player1Object: true,
+    },
   });
 
-  res.json(challenges)
+  let winStreaks: number[] = [];
+  let gameCounts: number[] = [];
+
+  for (const challenge of challenges) {
+    // Get list of games sorted by updatedAt
+    const games = challenge.link.gamesPlayed.concat(challenge.link.opposite.gamesPlayed).sort((a, b) => b.updatedAt - a.updatedAt);
+    console.log(challenge)
+    gameCounts.push(games.length);
+    if (games.length === 0) {
+      winStreaks.push(0);
+      continue;
+    }
+    let currIdx = 0;
+    let winStreak = 0;
+    console.log(games[currIdx])
+
+    while (currIdx < games.length && (
+      (getGameStatus(games[currIdx]) === STATUS_PLAYER1_WIN && address === games[currIdx].player1) ||
+      (getGameStatus(games[currIdx]) === STATUS_PLAYER2_WIN && address === games[currIdx].player2)
+    )) {
+      console.log(games[currIdx])
+      winStreak++;
+      currIdx++;
+    }
+    winStreaks.push(winStreak);
+  }
+
+  res.json(challenges.map((challenge, idx) => ({
+    uid: challenge.uid,
+    player1Object: challenge.player1Object,
+    stakes: challenge.stakes,
+    winstreak: winStreaks[idx],
+    gameCount: gameCounts[idx],
+  })));
 })
+
 
 app.post('/gamesPendingReveal', async (req, res) => {
   const {address} = req.body
@@ -279,8 +342,8 @@ app.post('/revealMany', async (req, res) => {
       game.salt2 = salt
     }
 
-    const [eloChange1, eloChange2] = await updateEloChangeIfApplicable(game);
 
+    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game);
 
     await prisma.game.update({
       where: {
@@ -293,6 +356,7 @@ app.post('/revealMany', async (req, res) => {
         salt2: game.salt2,
         eloChange1: eloChange1,
         eloChange2: eloChange2,
+        finalized: finalized,
       }
     })
   }
@@ -378,6 +442,20 @@ app.post('/getGraph', async (req, res) => {
     }))
       .filter(link => link.games.length > 0)
   })
+})
+
+app.post('/getElo', async (req, res) => {
+  const {address} = req.body
+  if (!address) {
+    return
+  }
+  const player = await prisma.player.findUnique({
+    where: {
+      address: address
+    }
+  });
+
+  res.json(player?.elo)
 })
 
 app.listen(port, () => {
