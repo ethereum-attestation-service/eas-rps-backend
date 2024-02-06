@@ -2,7 +2,7 @@ import express from 'express'
 import axios from "axios";
 import cors from 'cors'
 import bodyParser from "body-parser";
-import {StoreIPFSActionReturn} from "./types";
+import {Graph, StoreIPFSActionReturn} from "./types";
 import verificationMiddleware from './verifyAttestation'
 import {
   SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES, ZERO_BYTES32
@@ -13,6 +13,8 @@ import {PrismaClient, Game, Link} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+const graph: Graph = {};
+
 import {
   updateEloChangeIfApplicable,
   CHOICE_UNKNOWN,
@@ -21,9 +23,11 @@ import {
   STATUS_UNKNOWN, RPS_GAME_UID, getGameStatus, STATUS_PLAYER1_WIN, STATUS_PLAYER2_WIN
 } from "./utils";
 import {ethers} from 'ethers';
+import {loadGraph,addLink} from "./graph";
 
 const app = express()
 const port = 8080
+
 
 app.use(bodyParser.urlencoded({extended: true}));
 
@@ -40,36 +44,15 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
     }
 
     const schemaEncoder = new SchemaEncoder("string stakes");
-    console.log(schemaEncoder.decodeData(attestation.sig.message.data))
     const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
 
     const player1 = attestation.signer
     const player2 = attestation.sig.message.recipient
-    const existingLink = await prisma.link.findUnique({
-      where: {
-        player1_player2: {
-          player1: player1,
-          player2: player2,
-        }
-      }
-    });
-
-    if (!existingLink) {
-      await prisma.link.createMany({
-        data: [
-          {
-            player1: player1,
-            player2: player2,
-            default: true,
-          },
-          {
-            player1: player2,
-            player2: player1,
-            default: false,
-          }
-        ]
-      })
+    if (player1===player2){
+      return
     }
+
+    await addLink(player1, player2, graph);
 
     await prisma.game.create({
       data: {
@@ -246,7 +229,6 @@ app.post('/incomingChallenges', async (req, res) => {
   for (const challenge of challenges) {
     // Get list of games sorted by updatedAt
     const games = challenge.link.gamesPlayed.concat(challenge.link.opposite.gamesPlayed).sort((a, b) => b.updatedAt - a.updatedAt);
-    console.log(challenge)
     gameCounts.push(games.length);
     if (games.length === 0) {
       winStreaks.push(0);
@@ -254,13 +236,11 @@ app.post('/incomingChallenges', async (req, res) => {
     }
     let currIdx = 0;
     let winStreak = 0;
-    console.log(games[currIdx])
 
     while (currIdx < games.length && (
       (getGameStatus(games[currIdx]) === STATUS_PLAYER1_WIN && address === games[currIdx].player1) ||
       (getGameStatus(games[currIdx]) === STATUS_PLAYER2_WIN && address === games[currIdx].player2)
     )) {
-      console.log(games[currIdx])
       winStreak++;
       currIdx++;
     }
@@ -364,8 +344,8 @@ app.post('/revealMany', async (req, res) => {
   res.json({})
 })
 
-app.post('/myStats', async (req, res) => {
-  const {address} = req.body
+app.post('/myGames', async (req, res) => {
+  const {address, finalized} = req.body
   const myStats = await prisma.player.findUnique({
     where: {
       address: address
@@ -373,12 +353,14 @@ app.post('/myStats', async (req, res) => {
     include: {
       gamesPlayedAsPlayer1: {
         where: {
-          declined: false
-        }
+          declined: false,
+          finalized: finalized,
+        },
       },
       gamesPlayedAsPlayer2: {
         where: {
-          declined: false
+          declined: false,
+          finalized: finalized,
         }
       },
     }
@@ -391,7 +373,8 @@ app.post('/myStats', async (req, res) => {
   const player1Games = myStats.gamesPlayedAsPlayer1
   const player2Games = myStats.gamesPlayedAsPlayer2
 
-  const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
+  let games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
+
   res.json({games: games, elo: myStats.elo});
 });
 
@@ -458,6 +441,35 @@ app.post('/getElo', async (req, res) => {
   res.json(player?.elo)
 })
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+app.post('/ongoing',async(req,res)=>{
+  const {address} = req.body
+  const games = await prisma.game.findMany({
+    where:{
+      OR:[
+        {
+          player1:address,
+          choice1:CHOICE_UNKNOWN
+        },
+        {
+          player2:address,
+          choice2:CHOICE_UNKNOWN,
+          commit2:{
+            not: ZERO_BYTES32
+          }
+        }
+      ]
+    },
+    include:{
+      player1Object:true,
+      player2Object:true,
+    }
+  });
+
+  res.json(games)
+})
+
+app.listen(port, async () => {
+  await loadGraph(graph)
+  console.log('graph',graph)
+  console.log(` app listening on port ${port}`)
 })

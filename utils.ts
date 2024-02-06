@@ -93,12 +93,9 @@ export function getGameStatus(game: Game) {
 export async function updateEloChangeIfApplicable(game: GameWithPlayers): Promise<[number, number, boolean]> {
   const elo1 = game.player1Object.elo;
   const elo2 = game.player2Object.elo;
-  console.log('old', elo1, elo2)
   const gameStatus = getGameStatus(game);
-  console.log('gs', gameStatus)
   if (gameStatus === STATUS_UNKNOWN) return [0, 0, false];
   const [newElo1, newElo2] = calculateEloScore(elo1, elo2, gameStatus);
-  console.log('new', newElo1, newElo2)
   await prisma.player.update({
     where: {
       address: game.player1Object.address,
