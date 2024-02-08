@@ -9,21 +9,24 @@ import {
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
 
-import {PrismaClient, Game, Link} from "@prisma/client";
+import {PrismaClient, Game, Link, Player} from "@prisma/client";
 
 const prisma = new PrismaClient();
+import {UndirectedGraph} from "graphology";
+import {subgraph} from "graphology-operators";
 
-const graph: Graph = {};
+const graph = new UndirectedGraph();
 
 import {
   updateEloChangeIfApplicable,
   CHOICE_UNKNOWN,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
-  STATUS_UNKNOWN, RPS_GAME_UID, getGameStatus, STATUS_PLAYER1_WIN, STATUS_PLAYER2_WIN
+  STATUS_UNKNOWN, RPS_GAME_UID, getGameStatus, STATUS_PLAYER1_WIN, STATUS_PLAYER2_WIN, insertToTop10
 } from "./utils";
 import {ethers} from 'ethers';
-import {loadGraph,addLink} from "./graph";
+import {loadGraph, addLink} from "./graph";
+import {bfsFromNode} from "graphology-traversal";
 
 const app = express()
 const port = 8080
@@ -48,7 +51,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
 
     const player1 = attestation.signer
     const player2 = attestation.sig.message.recipient
-    if (player1===player2){
+    if (player1 === player2) {
       return
     }
 
@@ -58,23 +61,13 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
       data: {
         uid: attestation.sig.uid,
         player1Object: {
-          connectOrCreate: {
-            where: {
-              address: player1
-            },
-            create: {
-              address: player1
-            }
+          connect: {
+            address: player1
           }
         },
         player2Object: {
-          connectOrCreate: {
-            where: {
-              address: player2
-            },
-            create: {
-              address: player2
-            }
+          connect: {
+            address: player2
           }
         },
         commit1: ZERO_BYTES32,
@@ -94,6 +87,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         }
       }
     })
+
   } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
     const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
 
@@ -323,7 +317,7 @@ app.post('/revealMany', async (req, res) => {
     }
 
 
-    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game);
+    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
 
     await prisma.game.update({
       where: {
@@ -392,84 +386,137 @@ const graphGameFilter = {
   }
 };
 app.post('/getGraph', async (req, res) => {
-  const links = await prisma.link.findMany({
+  const links = graph.edges().map((edge) => {
+    // get destination of edge
+    return {source: graph.source(edge), target: graph.target(edge)}
+  })
+
+
+  res.json({
+    nodes: graph.nodes().map((node) => ({id: node})),
+    links: links
+  })
+})
+
+app.post('/getGamesBetweenPlayers', async (req, res) => {
+  const {player1, player2} = req.body
+
+  const link = await prisma.link.findUnique({
     where: {
-      default: true,
+      player1_player2: {
+        player1: player1,
+        player2: player2,
+      }
     },
     include: {
+      gamesPlayed: graphGameFilter,
       opposite: {
         include: {
           gamesPlayed: graphGameFilter,
         }
-      },
-      gamesPlayed: graphGameFilter,
-    },
+      }
+    }
   });
 
+  if (!link) return;
 
-  res.json({
-    nodes: [...new Set(links.map((link) => link.player1)
-      .concat(links.map((link) => link.player2)))]
-      .map((address) => ({
-        id: address,
-        group: 1,
-      }))
-    , links: links.map((link) => ({
-      source: link.player1,
-      target: link.player2,
-      games: link.gamesPlayed
-        .concat(link.opposite.gamesPlayed)
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .filter((game) => game.choice1 !== CHOICE_UNKNOWN && game.choice2 !== CHOICE_UNKNOWN)
-        .map((game) => game.uid),
-    }))
-      .filter(link => link.games.length > 0)
-  })
+  res.json(link.gamesPlayed.concat(link.opposite.gamesPlayed).sort((a, b) => b.updatedAt - a.updatedAt))
 })
 
 app.post('/getElo', async (req, res) => {
   const {address} = req.body
-  if (!address) {
+  if (!graph.hasNode(address)) {
     return
   }
-  const player = await prisma.player.findUnique({
-    where: {
-      address: address
-    }
-  });
-
-  res.json(player?.elo)
+  const player = graph.getNodeAttributes(address)
+  res.json(player.elo)
 })
 
-app.post('/ongoing',async(req,res)=>{
+app.post('/ongoing', async (req, res) => {
   const {address} = req.body
   const games = await prisma.game.findMany({
-    where:{
-      OR:[
+    where: {
+      OR: [
         {
-          player1:address,
-          choice1:CHOICE_UNKNOWN
+          player1: address,
+          choice1: CHOICE_UNKNOWN
         },
         {
-          player2:address,
-          choice2:CHOICE_UNKNOWN,
-          commit2:{
+          player2: address,
+          choice2: CHOICE_UNKNOWN,
+          commit2: {
             not: ZERO_BYTES32
           }
         }
       ]
     },
-    include:{
-      player1Object:true,
-      player2Object:true,
+    include: {
+      player1Object: true,
+      player2Object: true,
     }
   });
 
   res.json(games)
 })
 
+app.post('/globalLeaderboard', async (req, res) => {
+  const players = await prisma.player.findMany({
+    orderBy: {
+      elo: 'desc'
+    },
+    take: 10
+  });
+
+  res.json(players)
+})
+
+app.post('/localLeaderboard', async (req, res) => {
+  // bfs from address
+  const {address} = req.body
+
+  if (!graph.hasNode(address)) {
+    return
+  }
+  let leaderboard: Player[] = [];
+  bfsFromNode(graph, address, (node, attr, depth) => {
+    if (depth > 1) {
+      return true;
+    } else {
+      insertToTop10(leaderboard, {address: node, elo: attr.elo});
+      return false;
+    }
+  });
+
+  res.json(leaderboard)
+})
+
+app.post('/localGraph', async (req, res) => {
+  const {address} = req.body;
+  let nodes: string[] = [];
+  bfsFromNode(graph, address, (node, attr, depth) => {
+    if (depth > 1) {
+      return true;
+    } else {
+      nodes.push(node);
+      return false;
+    }
+  });
+
+  const sg = subgraph(graph, nodes);
+
+  const links = sg.edges().map((edge) => {
+    // get destination of edge
+    return {source: graph.source(edge), target: sg.target(edge)}
+  });
+
+
+  res.json({
+    nodes: nodes.map((node) => ({id: node})),
+    links: links
+  })
+})
+
 app.listen(port, async () => {
   await loadGraph(graph)
-  console.log('graph',graph)
   console.log(` app listening on port ${port}`)
 })

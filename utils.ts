@@ -1,6 +1,9 @@
 import {Attestation, Game, Player, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject} from "@ethereum-attestation-service/eas-sdk";
 import {GameWithPlayers} from "./types";
+import {updateNode} from "./graph";
+import {UndirectedGraph} from "graphology";
+import exp from "node:constants";
 
 const prisma = new PrismaClient();
 
@@ -90,29 +93,46 @@ export function getGameStatus(game: Game) {
   return (3 + game.choice1 - game.choice2) % 3;
 }
 
-export async function updateEloChangeIfApplicable(game: GameWithPlayers): Promise<[number, number, boolean]> {
+export async function updateEloChangeIfApplicable(game: GameWithPlayers, graph: UndirectedGraph): Promise<[number, number, boolean]> {
   const elo1 = game.player1Object.elo;
   const elo2 = game.player2Object.elo;
   const gameStatus = getGameStatus(game);
   if (gameStatus === STATUS_UNKNOWN) return [0, 0, false];
   const [newElo1, newElo2] = calculateEloScore(elo1, elo2, gameStatus);
-  await prisma.player.update({
-    where: {
-      address: game.player1Object.address,
-    },
-    data: {
-      elo: newElo1,
-    },
-  });
 
-  await prisma.player.update({
-    where: {
-      address: game.player2Object.address,
-    },
-    data: {
-      elo: newElo2,
-    },
-  });
+  await updateNode(game.player1Object.address, newElo1, graph);
+  await updateNode(game.player2Object.address, newElo2, graph);
 
   return [newElo1 - elo1, newElo2 - elo2, true]
 }
+
+export async function createPlayerIfDoesntExist(address: string) {
+  const player = await prisma.player.findUnique({
+    where: {
+      address: address,
+    }
+  });
+
+  if (!player) {
+    await prisma.player.create({
+      data: {
+        address: address,
+      }
+    });
+  }
+}
+
+export function insertToTop10(currList: Player[], newPlayer: Player) {
+  const idxToInsertAt = currList.findIndex((player) => player.elo < newPlayer.elo);
+  if (idxToInsertAt === -1) {
+    if (currList.length < 10) {
+      currList.push(newPlayer);
+    }
+  } else {
+    currList.splice(idxToInsertAt, 0, newPlayer);
+    if (currList.length > 10) {
+      currList.pop();
+    }
+  }
+}
+

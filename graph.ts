@@ -1,30 +1,51 @@
-import {Graph} from "./types";
 import {PrismaClient} from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-function addEdge(player1: string, player2: string, g: Graph) {
-  if (!g[player1]) g[player1] = [];
-  g[player1].push(player2);
+import {UndirectedGraph} from "graphology";
+import {createPlayerIfDoesntExist} from "./utils";
 
-  if (!g[player2]) g[player2] = [];
-  g[player2].push(player1);
+
+export async function updateNode(player: string, elo: number, g: UndirectedGraph) {
+  await prisma.player.update({
+    where: {
+      address: player,
+    },
+    data: {
+      elo: elo,
+    },
+  });
+
+  g.mergeNode(player, {elo});
 }
 
-
-export async function loadGraph(g: Graph) {
+export async function loadGraph(g: UndirectedGraph) {
   const allEdges = await prisma.link.findMany({
     where: {
       default: true,
+    },
+    include: {
+      player1Object: {
+        select: {
+          elo: true,
+        },
+      },
+      player2Object: {
+        select: {
+          elo: true,
+        },
+      }
     }
   });
 
   for (const edge of allEdges) {
-    addEdge(edge.player1, edge.player2, g);
+    g.mergeNode(edge.player1, edge.player1Object);
+    g.mergeNode(edge.player2, edge.player2Object);
+    g.mergeEdge(edge.player1, edge.player2);
   }
 }
 
-export async function addLink(player1: string, player2: string, g: Graph) {
+export async function addLink(player1: string, player2: string, g: UndirectedGraph) {
   const existingLink = await prisma.link.findUnique({
     where: {
       player1_player2: {
@@ -35,6 +56,8 @@ export async function addLink(player1: string, player2: string, g: Graph) {
   });
 
   if (!existingLink) {
+    await createPlayerIfDoesntExist(player1);
+    await createPlayerIfDoesntExist(player2);
     await prisma.link.createMany({
       data: [
         {
@@ -49,7 +72,14 @@ export async function addLink(player1: string, player2: string, g: Graph) {
         }
       ]
     })
-  }
+    g.mergeEdge(player1, player2);
 
-  addEdge(player1, player2, g);
+    if (!g.getNodeAttributes(player1).elo) {
+      g.setNodeAttribute(player1, "elo", 1000);
+    }
+
+    if (!g.getNodeAttributes(player2).elo) {
+      g.setNodeAttribute(player2, "elo", 1000);
+    }
+  }
 }

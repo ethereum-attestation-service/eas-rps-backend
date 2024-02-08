@@ -53,9 +53,13 @@ model Player {
   gamesPlayedAsPlayer1 Game[] @relation("player1Relation")
   gamesPlayedAsPlayer2 Game[] @relation("player2Relation")
   elo                  Int    @default(1000)
+  linksAsPlayer1       Link[] @relation("player1Links")
+  linksAsPlayer2       Link[] @relation("player2Links")
 }
 
 model Link {
+  player1Object   Player  @relation("player1Links", fields: [player1], references: [address])
+  player2Object   Player  @relation("player2Links", fields: [player2], references: [address])
   player1         String
   player2         String
   gamesPlayed     Game[]
