@@ -1,9 +1,13 @@
 import {Attestation, Game, Player, PrismaClient} from "@prisma/client";
-import {AttestationShareablePackageObject} from "@ethereum-attestation-service/eas-sdk";
+import {AttestationShareablePackageObject, ZERO_ADDRESS, ZERO_BYTES32} from "@ethereum-attestation-service/eas-sdk";
 import {GameWithPlayers} from "./types";
 import {updateNode} from "./graph";
 import {UndirectedGraph} from "graphology";
 import exp from "node:constants";
+import dayjs from "dayjs";
+import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
+import {ethers} from "ethers";
+
 
 const prisma = new PrismaClient();
 
@@ -14,10 +18,14 @@ export const CUSTOM_SCHEMAS = {
     "0x8f60d8dbd47e0a6953b0b1fd640359d249ba8f14c15c02bc5c6b642b0b888f37",
   DECLINE_GAME_CHALLENGE:
     "0x27e160d185f1d97202897bd3ed697906398b70a8d08b0d22bc2cfffdf561e3e9",
+  FINALIZE_GAME:
+    "0x74421276d2c56437784aec6f2ede7d837c2196897b16c0c73fa84865ce9ee565"
 };
 
 export const RPS_GAME_UID =
   "0x048de8e6b4bf0769744930cc2641ce05d473f3cd5ce976ba9e6a3256d4b011eb";
+
+export const EAS_CONTRACT_ADDRESS = "0xC2679fBD37d54388Ce493F1DB75320D236e1815e";
 
 export const CHOICE_UNKNOWN = 3;
 
@@ -31,6 +39,12 @@ export const STATUS_INVALID = 4;
 export const RESULT_DRAW = 0;
 export const RESULT_WIN = 1;
 export const RESULT_LOSS = 2;
+
+
+// @ts-ignore
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
 
 export function dbFriendlyAttestation(attestation: AttestationShareablePackageObject): Attestation {
   return {
@@ -133,6 +147,110 @@ export function insertToTop10(currList: Player[], newPlayer: Player) {
     if (currList.length > 10) {
       currList.pop();
     }
+  }
+}
+
+
+export async function signGameFinalization(game: GameWithPlayers, abandoned: boolean) {
+  const eas = new EAS(EAS_CONTRACT_ADDRESS);
+// Signer must be an ethers-like signer.
+  const provider = new ethers.JsonRpcProvider("https://rpc.sepolia.org");
+  const signer = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
+
+  await eas.connect(signer);
+// Initialize SchemaEncoder with the schema string
+  const schemaEncoder = new SchemaEncoder("bytes32[] relevantAttestations,bytes32 salt1,bytes32 salt2,uint8 choice1,uint8 choice2,bool abandoned");
+  const encodedData = schemaEncoder.encodeData([
+    {name: "relevantAttestations", value: [], type: "bytes32[]"},
+    {name: "salt1", value: game.salt1, type: "bytes32"},
+    {name: "salt2", value: game.salt2, type: "bytes32"},
+    {name: "choice1", value: game.choice1, type: "uint8"},
+    {name: "choice2", value: game.choice2, type: "uint8"},
+    {name: "abandoned", value: abandoned, type: "bool"}
+  ]);
+
+  const offchain = await eas.getOffchain();
+
+  const signedOffchainAttestation = await offchain.signOffchainAttestation(
+    {
+      schema: CUSTOM_SCHEMAS.FINALIZE_GAME,
+      recipient: ZERO_ADDRESS,
+      refUID: game.uid,
+      data: encodedData,
+      time: BigInt(dayjs().unix()),
+      revocable: false,
+      expirationTime: BigInt(0),
+    },
+    signer,
+  );
+
+  const pkg: AttestationShareablePackageObject = {
+    signer: signer.address!,
+    sig: signedOffchainAttestation,
+  };
+
+  return pkg;
+}
+
+export const timePerMove = 60; // 1 minute
+
+export async function concludeAbandonedGames(graph: UndirectedGraph) {
+  const abandonedGames = await prisma.game.findMany({
+    where: {
+      AND: [
+        {
+          OR: [
+            {choice1: CHOICE_UNKNOWN},
+            {choice2: CHOICE_UNKNOWN}
+          ]
+        },
+        {NOT: {commit1: ZERO_BYTES32}},
+        {NOT: {commit2: ZERO_BYTES32}},
+        {NOT: {choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN}},
+        {
+          updatedAt: {lt: dayjs().unix() - timePerMove}
+        }
+      ]
+    },
+    include: {
+      player1Object: true,
+      player2Object: true,
+    }
+  });
+
+
+  for (let game of abandonedGames) {
+    const player1Abandoned = game.choice1 === CHOICE_UNKNOWN;
+    if (player1Abandoned) {
+      game.choice1 = (game.choice2 + 2) % 3; // Give player 1 the losing choice
+    } else {
+      game.choice2 = (game.choice1 + 2) % 3; // Give player 2 the losing choice
+    }
+
+    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
+
+    if (finalized) {
+      const finalizationAttestation = await signGameFinalization(game, true);
+      await prisma.attestation.create({
+        data: dbFriendlyAttestation(finalizationAttestation),
+      })
+    }
+
+    await prisma.game.update({
+      where: {
+        uid: game.uid
+      },
+      data: {
+        choice1: game.choice1,
+        choice2: game.choice2,
+        salt1: game.salt1,
+        salt2: game.salt2,
+        eloChange1: eloChange1,
+        eloChange2: eloChange2,
+        finalized: finalized,
+        updatedAt: dayjs().unix(),
+      }
+    })
   }
 }
 

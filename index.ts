@@ -1,15 +1,14 @@
 import express from 'express'
-import axios from "axios";
 import cors from 'cors'
 import bodyParser from "body-parser";
-import {Graph, StoreIPFSActionReturn} from "./types";
+import {StoreIPFSActionReturn} from "./types";
 import verificationMiddleware from './verifyAttestation'
 import {
-  SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES, ZERO_BYTES32
+  SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES32
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
 
-import {PrismaClient, Game, Link, Player} from "@prisma/client";
+import {PrismaClient, Player} from "@prisma/client";
 
 const prisma = new PrismaClient();
 import {UndirectedGraph} from "graphology";
@@ -22,11 +21,17 @@ import {
   CHOICE_UNKNOWN,
   CUSTOM_SCHEMAS,
   dbFriendlyAttestation,
-  STATUS_UNKNOWN, RPS_GAME_UID, getGameStatus, STATUS_PLAYER1_WIN, STATUS_PLAYER2_WIN, insertToTop10
+  RPS_GAME_UID,
+  getGameStatus,
+  STATUS_PLAYER1_WIN,
+  STATUS_PLAYER2_WIN,
+  insertToTop10,
+  signGameFinalization
 } from "./utils";
 import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
 import {bfsFromNode} from "graphology-traversal";
+import {runCron} from "./cron";
 
 const app = express()
 const port = 8080
@@ -37,134 +42,142 @@ app.use(bodyParser.urlencoded({extended: true}));
 app.use(bodyParser.json());
 app.use(cors())
 
-// note: build in middleware to verify all attestations
 app.post('/newAttestation', verificationMiddleware, async (req, res) => {
   const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
 
-  if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
-    if (attestation.sig.message.refUID !== RPS_GAME_UID) {
-      return
-    }
+  try {
+    if (attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE) {
+      if (attestation.sig.message.refUID !== RPS_GAME_UID) {
+        return
+      }
 
-    const schemaEncoder = new SchemaEncoder("string stakes");
-    const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+      const schemaEncoder = new SchemaEncoder("string stakes");
+      const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
 
-    const player1 = attestation.signer
-    const player2 = attestation.sig.message.recipient
-    if (player1 === player2) {
-      return
-    }
+      const player1 = attestation.signer
+      const player2 = attestation.sig.message.recipient
+      if (player1 === player2) {
+        return
+      }
 
-    await addLink(player1, player2, graph);
+      await addLink(player1, player2, graph);
 
-    await prisma.game.create({
-      data: {
-        uid: attestation.sig.uid,
-        player1Object: {
-          connect: {
-            address: player1
-          }
-        },
-        player2Object: {
-          connect: {
-            address: player2
-          }
-        },
-        commit1: ZERO_BYTES32,
-        commit2: ZERO_BYTES32,
-        choice1: CHOICE_UNKNOWN,
-        choice2: CHOICE_UNKNOWN,
-        salt1: ZERO_BYTES32,
-        salt2: ZERO_BYTES32,
-        stakes: stakes,
-        link: {
-          connect: {
-            player1_player2: {
-              player1: player1,
-              player2: player2,
+      await prisma.game.create({
+        data: {
+          uid: attestation.sig.uid,
+          player1Object: {
+            connect: {
+              address: player1
+            }
+          },
+          player2Object: {
+            connect: {
+              address: player2
+            }
+          },
+          commit1: ZERO_BYTES32,
+          commit2: ZERO_BYTES32,
+          choice1: CHOICE_UNKNOWN,
+          choice2: CHOICE_UNKNOWN,
+          salt1: ZERO_BYTES32,
+          salt2: ZERO_BYTES32,
+          stakes: stakes,
+          updatedAt: dayjs().unix(),
+          link: {
+            connect: {
+              player1_player2: {
+                player1: player1,
+                player2: player2,
+              }
             }
           }
         }
-      }
-    })
+      })
 
-  } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
-    const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
+    } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
+      const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
 
-    const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
-    const gameID = attestation.sig.message.refUID;
+      const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+      const gameID = attestation.sig.message.refUID;
 
-    const players = await prisma.game.findUnique({
-      select: {
-        player1: true,
-        player2: true,
-      },
-      where: {
-        uid: gameID
-      }
-    })
-
-    if (attestation.signer === players!.player1) {
-      await prisma.game.update({
-        where: {
-          uid: gameID,
+      const players = await prisma.game.findUnique({
+        select: {
+          player1: true,
+          player2: true,
         },
-        data: {
-          commit1: commitHash,
-          updatedAt: dayjs().unix(),
+        where: {
+          uid: gameID
         }
       })
-    } else if (attestation.signer === players!.player2) {
-      await prisma.game.update({
+
+      if (!players) {
+        return
+      }
+
+      if (attestation.signer === players.player1) {
+        await prisma.game.update({
+          where: {
+            uid: gameID,
+          },
+          data: {
+            commit1: commitHash,
+            updatedAt: dayjs().unix(),
+          }
+        })
+      } else if (attestation.signer === players.player2) {
+        await prisma.game.update({
+          where: {
+            uid: gameID,
+          },
+          data: {
+            commit2: commitHash,
+            updatedAt: dayjs().unix(),
+          }
+        })
+      }
+    } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE) {
+      const gameID = attestation.sig.message.refUID;
+
+      const players = await prisma.game.findUnique({
+        select: {
+          player2: true,
+        },
         where: {
           uid: gameID,
-        },
-        data: {
-          commit2: commitHash,
-          updatedAt: dayjs().unix(),
+          commit2: ZERO_BYTES32,
         }
       })
-    }
-  } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.DECLINE_GAME_CHALLENGE) {
-    const gameID = attestation.sig.message.refUID;
 
-    const players = await prisma.game.findUnique({
-      select: {
-        player2: true,
-      },
-      where: {
-        uid: gameID,
-        commit2: ZERO_BYTES32,
+      if (!players) {
+        return
       }
+
+      if (attestation.signer === players.player2) {
+        await prisma.game.update({
+          where: {
+            uid: gameID,
+          },
+          data: {
+            declined: true,
+            updatedAt: dayjs().unix(),
+          }
+        })
+      }
+    }
+
+    await prisma.attestation.create({
+      data: dbFriendlyAttestation(attestation)
     })
 
-    if (!players) {
-      return
+    const result: StoreIPFSActionReturn = {
+      error: null,
+      ipfsHash: null,
+      offchainAttestationId: attestation.sig.uid
     }
-
-    if (attestation.signer === players.player2) {
-      await prisma.game.update({
-        where: {
-          uid: gameID,
-        },
-        data: {
-          declined: true,
-          updatedAt: dayjs().unix(),
-        }
-      })
-    }
+    res.json(result)
+  } catch  {
+    res.json({error: 'Your attestation was verified, but not indexed.'})
   }
-
-  await prisma.attestation.create({
-    data: dbFriendlyAttestation(attestation)
-  })
-
-  const result: StoreIPFSActionReturn = {
-    error: null,
-    ipfsHash: null,
-    offchainAttestationId: attestation.sig.uid
-  }
-  res.json(result)
 })
 
 app.post('/gameStatus', async (req, res) => {
@@ -195,8 +208,13 @@ const finalizedGamesFilter = {
     }
   },
 }
+
 app.post('/incomingChallenges', async (req, res) => {
-  const {address}: { address: string } = req.body
+  const {address} = req.body
+
+  if (!(typeof address === 'string')) {
+    return
+  }
 
   const challenges = await prisma.game.findMany({
     where: {
@@ -215,6 +233,9 @@ app.post('/incomingChallenges', async (req, res) => {
       },
       player1Object: true,
     },
+    orderBy: {
+      updatedAt: 'desc'
+    }
   });
 
   let winStreaks: number[] = [];
@@ -286,60 +307,77 @@ app.post('/revealMany', async (req, res) => {
   type Reveal = { uid: string, choice: number, salt: string }
   const {reveals}: { reveals: Reveal[] } = req.body
 
-  for (const reveal of reveals) {
-    const {uid, choice, salt} = reveal
-
-    let game = await prisma.game.findUnique({
-      where: {
-        uid: uid
-      },
-      include: {
-        player1Object: true,
-        player2Object: true,
+  try {
+    for (const reveal of reveals) {
+      const {uid, choice, salt} = reveal
+      if (!uid || (!choice && choice !== 0) || !salt) {
+        return
       }
-    })
 
-    if (!game) {
-      continue
-    }
+      let game = await prisma.game.findUnique({
+        where: {
+          uid: uid
+        },
+        include: {
+          player1Object: true,
+          player2Object: true,
+        }
+      })
 
-    const hashedChoice = ethers.solidityPackedKeccak256(
-      ["uint256", "bytes32"],
-      [choice, salt]
-    );
-
-    if (hashedChoice === game.commit1) {
-      game.choice1 = choice
-      game.salt1 = salt
-    } else if (hashedChoice === game.commit2) {
-      game.choice2 = choice
-      game.salt2 = salt
-    }
-
-
-    const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
-
-    await prisma.game.update({
-      where: {
-        uid: reveal.uid
-      },
-      data: {
-        choice1: game.choice1,
-        choice2: game.choice2,
-        salt1: game.salt1,
-        salt2: game.salt2,
-        eloChange1: eloChange1,
-        eloChange2: eloChange2,
-        finalized: finalized,
+      if (!game || game.finalized || game.declined) {
+        continue
       }
-    })
-  }
+
+      const hashedChoice = ethers.solidityPackedKeccak256(
+        ["uint256", "bytes32"],
+        [choice, salt]
+      );
+
+      if (hashedChoice === game.commit1) {
+        game.choice1 = choice
+        game.salt1 = salt
+      } else if (hashedChoice === game.commit2) {
+        game.choice2 = choice
+        game.salt2 = salt
+      }
+
+
+      const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
+
+      if (finalized) {
+        const finalizationAttestation = await signGameFinalization(game, false);
+        await prisma.attestation.create({
+          data: dbFriendlyAttestation(finalizationAttestation),
+        })
+      }
+
+      await prisma.game.update({
+        where: {
+          uid: reveal.uid
+        },
+        data: {
+          choice1: game.choice1,
+          choice2: game.choice2,
+          salt1: game.salt1,
+          salt2: game.salt2,
+          eloChange1: eloChange1,
+          eloChange2: eloChange2,
+          finalized: finalized,
+          updatedAt: dayjs().unix(),
+        }
+      })
+    }
+  } catch {}
 
   res.json({})
 })
 
 app.post('/myGames', async (req, res) => {
   const {address, finalized} = req.body
+  if (!(typeof finalized === 'boolean') || !(typeof address === 'string')) {
+    return
+  }
+
   const myStats = await prisma.player.findUnique({
     where: {
       address: address
@@ -401,6 +439,10 @@ app.post('/getGraph', async (req, res) => {
 app.post('/getGamesBetweenPlayers', async (req, res) => {
   const {player1, player2} = req.body
 
+  if (typeof player1 !== 'string' || typeof player2 !== 'string') {
+    return
+  }
+
   const link = await prisma.link.findUnique({
     where: {
       player1_player2: {
@@ -425,7 +467,7 @@ app.post('/getGamesBetweenPlayers', async (req, res) => {
 
 app.post('/getElo', async (req, res) => {
   const {address} = req.body
-  if (!graph.hasNode(address)) {
+  if (typeof address !== 'string' || !graph.hasNode(address)) {
     return
   }
   const player = graph.getNodeAttributes(address)
@@ -434,6 +476,9 @@ app.post('/getElo', async (req, res) => {
 
 app.post('/ongoing', async (req, res) => {
   const {address} = req.body
+  if (typeof address !== 'string') {
+    return
+  }
   const games = await prisma.game.findMany({
     where: {
       OR: [
@@ -474,7 +519,8 @@ app.post('/localLeaderboard', async (req, res) => {
   // bfs from address
   const {address} = req.body
 
-  if (!graph.hasNode(address)) {
+  if (typeof address !== 'string' || !graph.hasNode(address)) {
+    res.json([])
     return
   }
   let leaderboard: Player[] = [];
@@ -492,6 +538,13 @@ app.post('/localLeaderboard', async (req, res) => {
 
 app.post('/localGraph', async (req, res) => {
   const {address} = req.body;
+  if (typeof address !== 'string' || !graph.hasNode(address)) {
+    res.json({
+      nodes: [],
+      links: []
+    })
+    return
+  }
   let nodes: string[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
     if (depth > 1) {
@@ -520,3 +573,5 @@ app.listen(port, async () => {
   await loadGraph(graph)
   console.log(` app listening on port ${port}`)
 })
+
+runCron(graph);

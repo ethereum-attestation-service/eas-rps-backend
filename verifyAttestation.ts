@@ -3,6 +3,7 @@ import {
   Offchain, SignedOffchainAttestation, SignedOffchainAttestationV1,
 } from "@ethereum-attestation-service/eas-sdk";
 import {PrismaClient} from "@prisma/client";
+import dayjs, {Dayjs} from "dayjs";
 
 const prisma = new PrismaClient();
 
@@ -23,6 +24,10 @@ export const EAS_CONFIG = {
   version: SEPOLIA_CONFIG.version,
   chainId: BigInt(SEPOLIA_CONFIG.chainId),
 };
+
+function timestampsWithinTwoMinutesOfServer(time: Dayjs) {
+  return dayjs().diff(time, "minute") < 2;
+}
 
 
 export async function verifyOffchainAttestation(
@@ -64,15 +69,23 @@ export async function verifyOffchainAttestation(
 }
 
 export default async function (req: any, res: any, next: any) {
-  const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
-  const existingAttestation = await prisma.attestation.findUnique({
-    where: {
-      uid: attestation.sig.uid,
+  try {
+    const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
+    const existingAttestation = await prisma.attestation.findUnique({
+      where: {
+        uid: attestation.sig.uid,
+      }
+    });
+    const attestationTime = dayjs.unix(Number(attestation.sig.message.time));
+    if (timestampsWithinTwoMinutesOfServer(attestationTime) &&
+      await verifyOffchainAttestation(attestation) &&
+      !existingAttestation) {
+      next()
+    } else {
+      res.json({error: 'Your attestation could not be verified within the allotted time. Please try again.'})
     }
-  });
-  if (await verifyOffchainAttestation(attestation) && !existingAttestation) {
-    next()
-  } else {
-    res.send('Attestation not verified')
+  } catch (e) {
+    console.log(e)
+    res.json({error: 'Your attestation could not be verified within the allotted time. Please try again.'})
   }
 }
