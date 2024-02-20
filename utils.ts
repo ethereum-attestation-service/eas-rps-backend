@@ -113,7 +113,14 @@ export async function updateEloChangeIfApplicable(game: GameWithPlayers, graph: 
   const elo2 = game.player2Object.elo;
   const gameStatus = getGameStatus(game);
   if (gameStatus === STATUS_UNKNOWN) return [0, 0, false];
-  const [newElo1, newElo2] = calculateEloScore(elo1, elo2, gameStatus);
+  const player1Verified = graph.getNodeAttributes(game.player1Object.address).badges &&
+    graph.getNodeAttributes(game.player1Object.address).badges.length > 0;
+  const player2Verified = graph.getNodeAttributes(game.player2Object.address).badges &&
+    graph.getNodeAttributes(game.player2Object.address).badges.length > 0;
+  const bothVerified = player1Verified && player2Verified;
+
+  const [newElo1, newElo2] = bothVerified ?
+    calculateEloScore(elo1, elo2, gameStatus) : [elo1, elo2];
 
   await updateNode(game.player1Object.address, newElo1, graph);
   await updateNode(game.player2Object.address, newElo2, graph);
@@ -142,6 +149,7 @@ export type LeaderboardPlayer = {
   elo: number;
   badges: string[];
 }
+
 export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: LeaderboardPlayer, numPlayers: number) {
   const idxToInsertAt = currList.findIndex((player) => player.elo < newPlayer.elo);
   if (idxToInsertAt === -1) {
