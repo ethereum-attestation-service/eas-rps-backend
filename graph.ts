@@ -16,7 +16,7 @@ export async function updateNode(player: string, elo: number, g: UndirectedGraph
     },
   });
 
-  g.mergeNode(player, {elo});
+  g.mergeNode(player, {elo, badges: g.getNodeAttribute(player, "badges")});
 }
 
 export async function loadGraph(g: UndirectedGraph) {
@@ -28,19 +28,35 @@ export async function loadGraph(g: UndirectedGraph) {
       player1Object: {
         select: {
           elo: true,
+          whiteListAttestations: {
+            select: {
+              type: true,
+            }
+          }
         },
       },
       player2Object: {
         select: {
           elo: true,
+          whiteListAttestations: {
+            select: {
+              type: true,
+            }
+          }
         },
       }
     }
   });
 
   for (const edge of allEdges) {
-    g.mergeNode(edge.player1, edge.player1Object);
-    g.mergeNode(edge.player2, edge.player2Object);
+    g.mergeNode(edge.player1, {
+      elo: edge.player1Object.elo,
+      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type)
+    });
+    g.mergeNode(edge.player1, {
+      elo: edge.player1Object.elo,
+      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type)
+    });
     g.mergeEdge(edge.player1, edge.player2);
   }
 }

@@ -7,6 +7,7 @@ import exp from "node:constants";
 import dayjs from "dayjs";
 import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
 import {ethers} from "ethers";
+import axios from "axios";
 
 
 const prisma = new PrismaClient();
@@ -136,15 +137,20 @@ export async function createPlayerIfDoesntExist(address: string) {
   }
 }
 
-export function insertToTop10(currList: Player[], newPlayer: Player) {
+export type LeaderboardPlayer = {
+  address: string;
+  elo: number;
+  badges: string[];
+}
+export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: LeaderboardPlayer, numPlayers: number) {
   const idxToInsertAt = currList.findIndex((player) => player.elo < newPlayer.elo);
   if (idxToInsertAt === -1) {
-    if (currList.length < 10) {
+    if (currList.length < numPlayers) {
       currList.push(newPlayer);
     }
   } else {
     currList.splice(idxToInsertAt, 0, newPlayer);
-    if (currList.length > 10) {
+    if (currList.length > numPlayers) {
       currList.pop();
     }
   }
@@ -192,7 +198,7 @@ export async function signGameFinalization(game: GameWithPlayers, abandoned: boo
   return pkg;
 }
 
-export const timePerMove = 60; // 1 minute
+export const timePerMove = 60 * 60 * 24; // 1 day
 
 export async function concludeAbandonedGames(graph: UndirectedGraph) {
   const abandonedGames = await prisma.game.findMany({
@@ -254,3 +260,142 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
   }
 }
 
+type AuthorizedSchema = {
+  name: string;
+  attestors: string[];
+  schemaId: string;
+}
+
+const addresses = {
+  coinbase: '0x357458739F90461b99789350868CD7CF330Dd7EE',
+  steve: '0x0fb166cDdF1387C5b63fFa25721299fD7b068f3f',
+  bryce: '0x3e95B8E249c4536FE1db2E4ce5476010767C0A05',
+  jacob: '0xD04d9F44244929205cC4d1D9F21c96205DfD272B',
+};
+
+type Chain = 'base' | 'mainnet';
+export const AUTHORIZED_SCHEMAS = {
+  base: [{
+    name: 'Coinbase Verification',
+    attestors: [addresses.coinbase],
+    schemaId: "0xf8b05c79f090979bf4a80270aba232dff11a10d9ca55c4f88de95317970f0de9"
+  }],
+  mainnet: [{
+    name: 'EAS Met IRL',
+    attestors: [addresses.steve, addresses.bryce, addresses.jacob],
+    schemaId: "0xc59265615401143689cbfe73046a922c975c99d97e4c248070435b1104b2dea7"
+  }]
+}
+
+type AttestationResponse = {
+  decodedDataJson: string;
+  id: string;
+  isOffchain: boolean;
+}
+
+const CHAIN_ENDPOINTS = {
+  base: "https://base.easscan.org/graphql",
+  mainnet: "https://easscan.org/graphql"
+}
+
+export async function getAttestations(address: string, chain: Chain, timestamp: number) {
+  try {
+    // Get all attestations for this schema from graphql since last timestamp
+    const response = await axios.post(
+      CHAIN_ENDPOINTS[chain],
+      {
+        'query': 'query Query($where: AttestationWhereInput) {\n  attestations(where: $where) {\n    decodedDataJson\n    id\n    isOffchain\n  }\n}\n',
+        'variables': {
+          'where': {
+            'OR': AUTHORIZED_SCHEMAS[chain].map((schema: AuthorizedSchema) => ({
+              'attester': {
+                'in': schema.attestors
+              },
+              'schemaId': {
+                'equals': schema.schemaId
+              }
+            })),
+            'recipient': {
+              'equals': address
+            },
+            'time': {
+              'gt': timestamp
+            }
+          }
+        },
+        'operationName': 'Query'
+      },
+      {
+        headers: {
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Connection': 'keep-alive',
+          'Origin': 'https://studio.apollographql.com',
+          'Referer': 'https://studio.apollographql.com/sandbox/explorer',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'cross-site',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+          'content-type': 'application/json',
+          'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"macOS"'
+        }
+      }
+    );
+
+    return response.data.data.attestations.map((attestation: AttestationResponse) => ({...attestation, chain}));
+  } catch {
+    return []
+  }
+}
+
+export async function checkForNewVerifications(address: string, g: UndirectedGraph) {
+  const player = await prisma.player.findUnique({
+    select: {
+      whiteListTimestamp: true
+    },
+    where: {
+      address: address
+    }
+  });
+
+  if (!player) {
+    return;
+  }
+
+  const attestations = [...await getAttestations(address, 'base', player.whiteListTimestamp),
+    ...await getAttestations(address, 'mainnet', player.whiteListTimestamp)];
+
+  for (const attestation of attestations) {
+    //generate a new WhitelistAttestation in the db
+    try {
+      const badgeType = attestation.chain === 'base' ? "Coinbase" : "MetIRL"
+      await prisma.whitelistAttestation.create({
+        data: {
+          type: badgeType,
+          uid: attestation.id,
+          packageObjString: attestation.decodedDataJson,
+          chain: attestation.chain,
+          isOffchain: attestation.isOffchain,
+          recipient: address,
+        }
+      });
+
+      g.mergeNode(address, {
+        elo: g.getNodeAttribute(address, "elo"),
+        badges: [...g.getNodeAttribute(address, "badges"), badgeType]
+      })
+    } catch {
+    }
+  }
+
+  await prisma.player.update({
+    where: {
+      address: address
+    },
+    data: {
+      whiteListTimestamp: dayjs().unix()
+    }
+  });
+}

@@ -48,13 +48,25 @@ model Attestation {
   onChainTimestamp Int     @default(0)
 }
 
+model WhitelistAttestation {
+  uid              String  @id
+  type             String
+  isOffchain       Boolean @default(true)
+  chain            String  @default("mainnet")
+  packageObjString String
+  recipient        String
+  recipientObject  Player  @relation(fields: [recipient], references: [address])
+}
+
 model Player {
-  address              String @id
-  gamesPlayedAsPlayer1 Game[] @relation("player1Relation")
-  gamesPlayedAsPlayer2 Game[] @relation("player2Relation")
-  elo                  Int    @default(1000)
-  linksAsPlayer1       Link[] @relation("player1Links")
-  linksAsPlayer2       Link[] @relation("player2Links")
+  address               String                 @id
+  gamesPlayedAsPlayer1  Game[]                 @relation("player1Relation")
+  gamesPlayedAsPlayer2  Game[]                 @relation("player2Relation")
+  elo                   Int                    @default(1000)
+  linksAsPlayer1        Link[]                 @relation("player1Links")
+  linksAsPlayer2        Link[]                 @relation("player2Links")
+  whiteListAttestations WhitelistAttestation[]
+  whiteListTimestamp    Int                    @default(0)
 }
 
 model Link {

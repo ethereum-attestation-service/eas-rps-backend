@@ -25,8 +25,8 @@ import {
   getGameStatus,
   STATUS_PLAYER1_WIN,
   STATUS_PLAYER2_WIN,
-  insertToTop10,
-  signGameFinalization
+  insertToLeaderboard,
+  signGameFinalization, checkForNewVerifications, LeaderboardPlayer
 } from "./utils";
 import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
@@ -36,11 +36,14 @@ import {runCron} from "./cron";
 const app = express()
 const port = 8080
 
-
 app.use(bodyParser.urlencoded({extended: true}));
 
 app.use(bodyParser.json());
 app.use(cors())
+
+app.get('/ok', (req, res) => {
+  res.send('ok')
+})
 
 app.post('/newAttestation', verificationMiddleware, async (req, res) => {
   const attestation: AttestationShareablePackageObject = JSON.parse(req.body.textJson)
@@ -175,7 +178,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
       offchainAttestationId: attestation.sig.uid
     }
     res.json(result)
-  } catch  {
+  } catch {
     res.json({error: 'Your attestation was verified, but not indexed.'})
   }
 })
@@ -183,7 +186,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
 app.post('/gameStatus', async (req, res) => {
   const {uid} = req.body
 
-  const game = await prisma.game.findUnique({
+  let game = await prisma.game.findUnique({
     where: {
       uid: uid
     },
@@ -193,8 +196,24 @@ app.post('/gameStatus', async (req, res) => {
           packageObjString: true,
         }
       },
-      player1Object: true,
-      player2Object: true,
+      player1Object: {
+        include: {
+          whiteListAttestations: {
+            select: {
+              type: true,
+            }
+          },
+        }
+      },
+      player2Object: {
+        include: {
+          whiteListAttestations: {
+            select: {
+              type: true,
+            }
+          },
+        }
+      },
     }
   })
 
@@ -231,7 +250,15 @@ app.post('/incomingChallenges', async (req, res) => {
           }
         }
       },
-      player1Object: true,
+      player1Object: {
+        include: {
+          whiteListAttestations: {
+            select: {
+              type: true,
+            }
+          },
+        }
+      },
     },
     orderBy: {
       updatedAt: 'desc'
@@ -367,7 +394,8 @@ app.post('/revealMany', async (req, res) => {
         }
       })
     }
-  } catch {}
+  } catch {
+  }
 
   res.json({})
 })
@@ -423,6 +451,8 @@ const graphGameFilter = {
     declined: false,
   }
 };
+
+
 app.post('/getGraph', async (req, res) => {
   const links = graph.edges().map((edge) => {
     // get destination of edge
@@ -471,7 +501,7 @@ app.post('/getElo', async (req, res) => {
     return
   }
   const player = graph.getNodeAttributes(address)
-  res.json(player.elo)
+  res.json(player)
 })
 
 app.post('/ongoing', async (req, res) => {
@@ -509,10 +539,21 @@ app.post('/globalLeaderboard', async (req, res) => {
     orderBy: {
       elo: 'desc'
     },
-    take: 10
+    include: {
+      whiteListAttestations: {
+        select: {
+          type: true,
+        }
+      }
+    },
+    take: 30
   });
 
-  res.json(players)
+  res.json(players.map(player => ({
+    elo: player.elo,
+    address: player.address,
+    badges: player.whiteListAttestations.map(elem => elem.type)
+  })))
 })
 
 app.post('/localLeaderboard', async (req, res) => {
@@ -523,17 +564,26 @@ app.post('/localLeaderboard', async (req, res) => {
     res.json([])
     return
   }
-  let leaderboard: Player[] = [];
+  let leaderboard: LeaderboardPlayer[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
     if (depth > 1) {
       return true;
     } else {
-      insertToTop10(leaderboard, {address: node, elo: attr.elo});
+      console.log('attd',attr)
+      insertToLeaderboard(leaderboard, {
+        address: node,
+        elo: attr.elo,
+        badges: attr.badges
+      }, 30);
       return false;
     }
   });
 
-  res.json(leaderboard)
+  res.json(leaderboard.map(elem=>({
+    elo:elem.elo,
+    address:elem.address,
+    badges:elem.badges || []
+  })))
 })
 
 app.post('/localGraph', async (req, res) => {
@@ -569,7 +619,15 @@ app.post('/localGraph', async (req, res) => {
   })
 })
 
-app.listen(port, async () => {
+app.post('/checkForBadges', async (req, res) => {
+  const {address} = req.body;
+  await checkForNewVerifications(address, graph);
+})
+
+const outerRoute = express()
+outerRoute.use('/api', app);
+
+outerRoute.listen(port, async () => {
   await loadGraph(graph)
   console.log(` app listening on port ${port}`)
 })
