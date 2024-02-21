@@ -1,9 +1,8 @@
-import {Attestation, Game, Player, PrismaClient} from "@prisma/client";
+import {Attestation, Game, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject, ZERO_ADDRESS, ZERO_BYTES32} from "@ethereum-attestation-service/eas-sdk";
 import {GameWithPlayers, GameWithPlayersAndAttestations} from "./types";
 import {updateNode} from "./graph";
 import {UndirectedGraph} from "graphology";
-import exp from "node:constants";
 import dayjs from "dayjs";
 import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
 import {ethers} from "ethers";
@@ -35,11 +34,11 @@ export const STATUS_PLAYER1_WIN = 1;
 export const STATUS_PLAYER2_WIN = 2;
 
 export const STATUS_UNKNOWN = 3;
-export const STATUS_INVALID = 4;
-
-export const RESULT_DRAW = 0;
-export const RESULT_WIN = 1;
-export const RESULT_LOSS = 2;
+// export const STATUS_INVALID = 4;
+//
+// export const RESULT_DRAW = 0;
+// export const RESULT_WIN = 1;
+// export const RESULT_LOSS = 2;
 
 
 // @ts-ignore
@@ -171,7 +170,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
   const provider = new ethers.JsonRpcProvider("https://rpc.sepolia.org");
   const signer = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
 
-  await eas.connect(signer);
+  eas.connect(signer);
 // Initialize SchemaEncoder with the schema string
   const schemaEncoder = new SchemaEncoder("bytes32[] relevantAttestations,bytes32 salt1,bytes32 salt2,uint8 choice1,uint8 choice2,bool abandoned");
   const encodedData = schemaEncoder.encodeData([
@@ -206,7 +205,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
   return pkg;
 }
 
-export const timePerMove = 60 * 60 * 24; // 1 day
+export const timePerMove = 30; // 30 sec
 
 export async function concludeAbandonedGames(graph: UndirectedGraph) {
   const abandonedGames = await prisma.game.findMany({
@@ -270,6 +269,52 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
         updatedAt: dayjs().unix(),
       }
     })
+  }
+}
+
+export async function invalidateAbandonedGames() {
+  const abandonedGames = await prisma.game.findMany({
+    where: {
+      AND: [
+        {choice1: CHOICE_UNKNOWN, choice2: CHOICE_UNKNOWN},
+        {
+          updatedAt: {lt: dayjs().unix() - timePerMove}
+        },
+        {invalidated: false}
+      ]
+    },
+    include: {
+      player1Object: true,
+      player2Object: true,
+      relevantAttestations: {
+        select: {
+          uid: true
+        }
+      }
+    }
+  });
+
+  for (let game of abandonedGames) {
+    const finalizationAttestation = await signGameFinalization(game, true);
+    await prisma.attestation.create({
+      data: dbFriendlyAttestation(finalizationAttestation),
+    })
+
+
+    await prisma.game.update({
+      where: {
+        uid: game.uid
+      },
+      data: {
+        choice1: game.choice1,
+        choice2: game.choice2,
+        salt1: game.salt1,
+        salt2: game.salt2,
+        finalized: true,
+        updatedAt: dayjs().unix(),
+        invalidated: true
+      }
+    });
   }
 }
 

@@ -31,6 +31,7 @@ model Game {
   link                 Link          @relation(fields: [player1, player2], references: [player1, player2])
   abandoned            Boolean       @default(false)
   finalized            Boolean       @default(false)
+  invalidated          Boolean       @default(false)
 }
 
 model Attestation {

@@ -8,7 +8,7 @@ import {
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
 
-import {PrismaClient, Player} from "@prisma/client";
+import {PrismaClient} from "@prisma/client";
 
 const prisma = new PrismaClient();
 import {UndirectedGraph} from "graphology";
@@ -438,9 +438,9 @@ app.post('/myGames', async (req, res) => {
   const player1Games = myStats.gamesPlayedAsPlayer1
   const player2Games = myStats.gamesPlayedAsPlayer2
 
-  let games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
+  const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
 
-  res.json({games: games, elo: myStats.elo});
+  res.json({games: games, elo: myStats.elo, badges: graph.getNodeAttribute(address, 'badges')});
 });
 
 
@@ -626,6 +626,7 @@ app.post('/localGraph', async (req, res) => {
 app.post('/checkForBadges', async (req, res) => {
   const {address} = req.body;
   await checkForNewVerifications(address, graph);
+  res.json({})
 })
 
 const outerRoute = express()
