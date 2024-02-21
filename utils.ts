@@ -24,7 +24,7 @@ export const CUSTOM_SCHEMAS = {
 };
 
 export const RPS_GAME_UID =
-  "0x048de8e6b4bf0769744930cc2641ce05d473f3cd5ce976ba9e6a3256d4b011eb";
+  "0x9a3b8beb51629e4624923863231c3931f466e79dac4d7c7f2d0e346240e66a72";
 
 export const EAS_CONTRACT_ADDRESS = "0xC2679fBD37d54388Ce493F1DB75320D236e1815e";
 
@@ -366,7 +366,8 @@ export async function getAttestations(address: string, chain: Chain, timestamp: 
 export async function checkForNewVerifications(address: string, g: UndirectedGraph) {
   const player = await prisma.player.findUnique({
     select: {
-      whiteListTimestamp: true
+      whiteListTimestamp: true,
+      whiteListAttestations: true
     },
     where: {
       address: address
@@ -395,8 +396,9 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
         }
       });
 
+
       g.mergeNode(address, {
-        elo: g.getNodeAttribute(address, "elo"),
+        elo: g.getNodeAttribute(address, "elo") || 1000,
         badges: [...g.getNodeAttribute(address, "badges"), badgeType]
       })
     } catch {
@@ -408,7 +410,8 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
       address: address
     },
     data: {
-      whiteListTimestamp: dayjs().unix()
+      whiteListTimestamp: dayjs().unix(),
+      elo: g.getNodeAttribute(address, "elo"),
     }
   });
 }
