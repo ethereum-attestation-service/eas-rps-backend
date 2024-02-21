@@ -95,6 +95,7 @@ export type GameWithPlayers = Game & {
   player2Object: Player;
 };
 
+export type GameWithPlayersAndAttestations = GameWithPlayers & {relevantAttestations: {uid: string}[]};
 
 // Type for Graph as object with key as string and value as array of strings
 export type Graph = {

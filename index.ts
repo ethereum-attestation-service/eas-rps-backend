@@ -348,6 +348,11 @@ app.post('/revealMany', async (req, res) => {
         include: {
           player1Object: true,
           player2Object: true,
+          relevantAttestations: {
+            select: {
+              uid: true,
+            }
+          }
         }
       })
 
@@ -569,7 +574,6 @@ app.post('/localLeaderboard', async (req, res) => {
     if (depth > 1) {
       return true;
     } else {
-      console.log('attd',attr)
       insertToLeaderboard(leaderboard, {
         address: node,
         elo: attr.elo,

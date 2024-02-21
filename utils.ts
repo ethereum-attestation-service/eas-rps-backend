@@ -1,6 +1,6 @@
 import {Attestation, Game, Player, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject, ZERO_ADDRESS, ZERO_BYTES32} from "@ethereum-attestation-service/eas-sdk";
-import {GameWithPlayers} from "./types";
+import {GameWithPlayers, GameWithPlayersAndAttestations} from "./types";
 import {updateNode} from "./graph";
 import {UndirectedGraph} from "graphology";
 import exp from "node:constants";
@@ -165,7 +165,7 @@ export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: Le
 }
 
 
-export async function signGameFinalization(game: GameWithPlayers, abandoned: boolean) {
+export async function signGameFinalization(game: GameWithPlayersAndAttestations, abandoned: boolean) {
   const eas = new EAS(EAS_CONTRACT_ADDRESS);
 // Signer must be an ethers-like signer.
   const provider = new ethers.JsonRpcProvider("https://rpc.sepolia.org");
@@ -175,7 +175,7 @@ export async function signGameFinalization(game: GameWithPlayers, abandoned: boo
 // Initialize SchemaEncoder with the schema string
   const schemaEncoder = new SchemaEncoder("bytes32[] relevantAttestations,bytes32 salt1,bytes32 salt2,uint8 choice1,uint8 choice2,bool abandoned");
   const encodedData = schemaEncoder.encodeData([
-    {name: "relevantAttestations", value: [], type: "bytes32[]"},
+    {name: "relevantAttestations", value: game.relevantAttestations.map(att => att.uid), type: "bytes32[]"},
     {name: "salt1", value: game.salt1, type: "bytes32"},
     {name: "salt2", value: game.salt2, type: "bytes32"},
     {name: "choice1", value: game.choice1, type: "uint8"},
@@ -229,6 +229,11 @@ export async function concludeAbandonedGames(graph: UndirectedGraph) {
     include: {
       player1Object: true,
       player2Object: true,
+      relevantAttestations: {
+        select: {
+          uid: true
+        }
+      }
     }
   });
 
