@@ -1,6 +1,6 @@
 import {Attestation, Game, PrismaClient} from "@prisma/client";
 import {AttestationShareablePackageObject, ZERO_ADDRESS, ZERO_BYTES32} from "@ethereum-attestation-service/eas-sdk";
-import {GameWithPlayers, GameWithPlayersAndAttestations} from "./types";
+import {GameWithPlayers, GameWithPlayersAndAttestations, LeaderboardPlayer} from "./types";
 import {updateNode} from "./graph";
 import {UndirectedGraph} from "graphology";
 import dayjs from "dayjs";
@@ -127,7 +127,7 @@ export async function updateEloChangeIfApplicable(game: GameWithPlayers, graph: 
   return [newElo1 - elo1, newElo2 - elo2, true]
 }
 
-export async function createPlayerIfDoesntExist(address: string) {
+export async function createPlayerIfDoesntExistAndReturnENS(address: string) {
   const player = await prisma.player.findUnique({
     where: {
       address: address,
@@ -135,19 +135,18 @@ export async function createPlayerIfDoesntExist(address: string) {
   });
 
   if (!player) {
+    const ens = await getENSName(address);
     await prisma.player.create({
       data: {
         address: address,
+        ensName: await getENSName(address),
       }
     });
+    return ens;
   }
+  return player.ensName;
 }
 
-export type LeaderboardPlayer = {
-  address: string;
-  elo: number;
-  badges: string[];
-}
 
 export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: LeaderboardPlayer, numPlayers: number) {
   const idxToInsertAt = currList.findIndex((player) => player.elo < newPlayer.elo);
@@ -205,7 +204,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
   return pkg;
 }
 
-export const timePerMove = 30; // 30 sec
+export const timePerMove = 60*60*24; // 1 day
 
 export async function concludeAbandonedGames(graph: UndirectedGraph) {
   const abandonedGames = await prisma.game.findMany({
@@ -459,4 +458,20 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
       elo: g.getNodeAttribute(address, "elo"),
     }
   });
+}
+
+export async function getENSName(address: string) {
+  try {
+    const provider = new ethers.JsonRpcProvider(
+      `https://eth-mainnet.g.alchemy.com/v2/${process.env.REACT_APP_ALCHEMY_API_KEY}`,
+      "mainnet",
+      {
+        staticNetwork: new ethers.Network("mainnet", 1),
+      }
+    );
+    return await provider.lookupAddress(address);
+  } catch (e) {
+    console.log(e)
+    return null;
+  }
 }

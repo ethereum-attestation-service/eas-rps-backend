@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import bodyParser from "body-parser";
-import {StoreIPFSActionReturn} from "./types";
+import {StoreIPFSActionReturn, LeaderboardPlayer} from "./types";
 import verificationMiddleware from './verifyAttestation'
 import {
   SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES32
@@ -26,7 +26,7 @@ import {
   STATUS_PLAYER1_WIN,
   STATUS_PLAYER2_WIN,
   insertToLeaderboard,
-  signGameFinalization, checkForNewVerifications, LeaderboardPlayer
+  signGameFinalization, checkForNewVerifications
 } from "./utils";
 import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
@@ -240,6 +240,7 @@ app.post('/incomingChallenges', async (req, res) => {
       player2: address,
       commit2: ZERO_BYTES32,
       declined: false,
+      invalidated: false,
     },
     include: {
       link: {
@@ -313,6 +314,8 @@ app.post('/gamesPendingReveal', async (req, res) => {
       commit2: {
         not: ZERO_BYTES32
       },
+      invalidated: false,
+      declined: false,
       OR: [
         {
           player1: address,
@@ -330,10 +333,11 @@ app.post('/gamesPendingReveal', async (req, res) => {
 
 })
 
+
+let revealForbidden = new Map<string, boolean>();
 app.post('/revealMany', async (req, res) => {
   type Reveal = { uid: string, choice: number, salt: string }
   const {reveals}: { reveals: Reveal[] } = req.body
-
   try {
     for (const reveal of reveals) {
       const {uid, choice, salt} = reveal
@@ -343,7 +347,10 @@ app.post('/revealMany', async (req, res) => {
 
       let game = await prisma.game.findUnique({
         where: {
-          uid: uid
+          uid: uid,
+          declined: false,
+          invalidated: false,
+          finalized: false,
         },
         include: {
           player1Object: true,
@@ -356,7 +363,7 @@ app.post('/revealMany', async (req, res) => {
         }
       })
 
-      if (!game || game.finalized || game.declined) {
+      if (!game) {
         continue
       }
 
@@ -368,11 +375,24 @@ app.post('/revealMany', async (req, res) => {
       if (hashedChoice === game.commit1) {
         game.choice1 = choice
         game.salt1 = salt
+
+        if (revealForbidden.get(`${uid}1`)) {
+          continue;
+        } else {
+          revealForbidden.set(`${uid}1`, true);
+        }
       } else if (hashedChoice === game.commit2) {
         game.choice2 = choice
         game.salt2 = salt
-      }
 
+        if (revealForbidden.get(`${uid}2`)) {
+          continue;
+        } else {
+          revealForbidden.set(`${uid}2`, true);
+        }
+      } else {
+        continue;
+      }
 
       const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
 
@@ -509,6 +529,19 @@ app.post('/getElo', async (req, res) => {
   res.json(player)
 })
 
+const filterPlayerObject = {
+  select: {
+    address: true,
+    elo: true,
+    ensName: true,
+    whiteListAttestations: {
+      select: {
+        type: true,
+      }
+    }
+  }
+}
+
 app.post('/ongoing', async (req, res) => {
   const {address} = req.body
   if (typeof address !== 'string') {
@@ -528,11 +561,13 @@ app.post('/ongoing', async (req, res) => {
             not: ZERO_BYTES32
           }
         }
-      ]
+      ],
+      declined: false,
+      invalidated: false,
     },
     include: {
-      player1Object: true,
-      player2Object: true,
+      player1Object: filterPlayerObject,
+      player2Object: filterPlayerObject,
     }
   });
 
@@ -557,7 +592,8 @@ app.post('/globalLeaderboard', async (req, res) => {
   res.json(players.map(player => ({
     elo: player.elo,
     address: player.address,
-    badges: player.whiteListAttestations.map(elem => elem.type)
+    badges: player.whiteListAttestations.map(elem => elem.type),
+    ensName: player.ensName
   })))
 })
 
@@ -574,24 +610,28 @@ app.post('/localLeaderboard', async (req, res) => {
     if (depth > 1) {
       return true;
     } else {
+      console.log(attr)
       insertToLeaderboard(leaderboard, {
         address: node,
         elo: attr.elo,
-        badges: attr.badges
+        badges: attr.badges,
+        ensName: attr.ensName || null
       }, 30);
       return false;
     }
   });
 
-  res.json(leaderboard.map(elem=>({
-    elo:elem.elo,
-    address:elem.address,
-    badges:elem.badges || []
+  res.json(leaderboard.map(elem => ({
+    elo: elem.elo,
+    address: elem.address,
+    badges: elem.badges || [],
+    ensName: elem.ensName
   })))
 })
 
 app.post('/localGraph', async (req, res) => {
   const {address} = req.body;
+  console.log(address)
   if (typeof address !== 'string' || !graph.hasNode(address)) {
     res.json({
       nodes: [],
@@ -604,6 +644,7 @@ app.post('/localGraph', async (req, res) => {
     if (depth > 1) {
       return true;
     } else {
+      console.log(node)
       nodes.push(node);
       return false;
     }

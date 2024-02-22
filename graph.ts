@@ -3,7 +3,7 @@ import {PrismaClient} from "@prisma/client";
 const prisma = new PrismaClient();
 
 import {UndirectedGraph} from "graphology";
-import {createPlayerIfDoesntExist} from "./utils";
+import {createPlayerIfDoesntExistAndReturnENS} from "./utils";
 
 
 export async function updateNode(player: string, elo: number, g: UndirectedGraph) {
@@ -16,18 +16,20 @@ export async function updateNode(player: string, elo: number, g: UndirectedGraph
     },
   });
 
-  g.mergeNode(player, {elo, badges: g.getNodeAttribute(player, "badges")});
+  g.mergeNode(player, {
+    elo,
+    badges: g.getNodeAttribute(player, "badges"),
+    ensName: g.getNodeAttribute(player, "ensName")
+  });
 }
 
 export async function loadGraph(g: UndirectedGraph) {
   const allEdges = await prisma.link.findMany({
-    where: {
-      default: true,
-    },
     include: {
       player1Object: {
         select: {
           elo: true,
+          ensName: true,
           whiteListAttestations: {
             select: {
               type: true,
@@ -35,27 +37,14 @@ export async function loadGraph(g: UndirectedGraph) {
           }
         },
       },
-      player2Object: {
-        select: {
-          elo: true,
-          whiteListAttestations: {
-            select: {
-              type: true,
-            }
-          }
-        },
-      }
     }
   });
 
   for (const edge of allEdges) {
     g.mergeNode(edge.player1, {
       elo: edge.player1Object.elo,
-      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type)
-    });
-    g.mergeNode(edge.player1, {
-      elo: edge.player1Object.elo,
-      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type)
+      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type),
+      ensName: edge.player1Object.ensName
     });
     g.mergeEdge(edge.player1, edge.player2);
   }
@@ -72,8 +61,8 @@ export async function addLink(player1: string, player2: string, g: UndirectedGra
   });
 
   if (!existingLink) {
-    await createPlayerIfDoesntExist(player1);
-    await createPlayerIfDoesntExist(player2);
+    const ens1 = await createPlayerIfDoesntExistAndReturnENS(player1);
+    const ens2 = await createPlayerIfDoesntExistAndReturnENS(player2);
     await prisma.link.createMany({
       data: [
         {
@@ -90,12 +79,16 @@ export async function addLink(player1: string, player2: string, g: UndirectedGra
     })
     g.mergeEdge(player1, player2);
 
-    if (!g.getNodeAttributes(player1).elo) {
-      g.setNodeAttribute(player1, "elo", 1000);
+    const [node1, node2] = [player1, player2].map(player => g.getNodeAttributes(player));
+
+    if (!node1.elo && node1.elo !== 0) {
+      g.setNodeAttribute(player1, "elo", 0);
+      g.setNodeAttribute(player1, "ensName", ens1);
     }
 
-    if (!g.getNodeAttributes(player2).elo) {
-      g.setNodeAttribute(player2, "elo", 1000);
+    if (!node2.elo && node2.elo !== 0) {
+      g.setNodeAttribute(player2, "elo", 0);
+      g.setNodeAttribute(player2, "ensName", ens2);
     }
   }
 }

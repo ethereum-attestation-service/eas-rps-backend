@@ -101,3 +101,10 @@ export type GameWithPlayersAndAttestations = GameWithPlayers & {relevantAttestat
 export type Graph = {
   [key: string]: string[];
 };
+
+export type LeaderboardPlayer = {
+  address: string;
+  elo: number;
+  badges: string[];
+  ensName?: string;
+}

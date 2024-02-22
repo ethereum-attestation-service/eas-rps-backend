@@ -61,6 +61,7 @@ model WhitelistAttestation {
 
 model Player {
   address               String                 @id
+  ensName               String?
   gamesPlayedAsPlayer1  Game[]                 @relation("player1Relation")
   gamesPlayedAsPlayer2  Game[]                 @relation("player2Relation")
   elo                   Int                    @default(0)
