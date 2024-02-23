@@ -7,6 +7,7 @@ import dayjs from "dayjs";
 import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
 import {ethers} from "ethers";
 import axios from "axios";
+import {AvatarResolver, utils as avtUtils} from '@ensdomains/ens-avatar';
 
 
 const prisma = new PrismaClient();
@@ -134,17 +135,19 @@ export async function createPlayerIfDoesntExistAndReturnENS(address: string) {
     }
   });
 
+  const ens = await getENS(address);
+
   if (!player) {
-    const ens = await getENSName(address);
     await prisma.player.create({
       data: {
         address: address,
-        ensName: await getENSName(address),
+        ensName: ens.name,
+        ensAvatar: ens.avatar,
       }
     });
-    return ens;
   }
-  return player.ensName;
+
+  return ens;
 }
 
 
@@ -204,7 +207,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
   return pkg;
 }
 
-export const timePerMove = 60*60*24; // 1 day
+export const timePerMove = 60 * 60 * 24; // 1 day
 
 export async function concludeAbandonedGames(graph: UndirectedGraph) {
   const abandonedGames = await prisma.game.findMany({
@@ -323,7 +326,7 @@ type AuthorizedSchema = {
   schemaId: string;
 }
 
-const addresses = {
+export const addresses = {
   coinbase: '0x357458739F90461b99789350868CD7CF330Dd7EE',
   steve: '0x0fb166cDdF1387C5b63fFa25721299fD7b068f3f',
   bryce: '0x3e95B8E249c4536FE1db2E4ce5476010767C0A05',
@@ -418,12 +421,28 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
     }
   });
 
+
+  const attestations = [...await getAttestations(address, 'base', player?.whiteListTimestamp || 0),
+    ...await getAttestations(address, 'mainnet', player?.whiteListTimestamp || 0)];
+
+
+  const ens = await createPlayerIfDoesntExistAndReturnENS(address);
+
   if (!player) {
-    return;
+    g.mergeNode(address, {
+      elo: 0,
+      ensName: ens.name,
+      ensAvatar: ens.avatar,
+      badges: []
+    });
+  } else {
+    g.setNodeAttribute(address, 'ensName', ens.name);
+    g.setNodeAttribute(address, 'ensAvatar', ens.avatar);
   }
 
-  const attestations = [...await getAttestations(address, 'base', player.whiteListTimestamp),
-    ...await getAttestations(address, 'mainnet', player.whiteListTimestamp)];
+  if (attestations.length && (!player || !player.whiteListAttestations.length)) {
+    g.setNodeAttribute(address, 'elo', 1000);
+  }
 
   for (const attestation of attestations) {
     //generate a new WhitelistAttestation in the db
@@ -440,12 +459,9 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
         }
       });
 
-
-      g.mergeNode(address, {
-        elo: g.getNodeAttribute(address, "elo") || 1000,
-        badges: [...g.getNodeAttribute(address, "badges"), badgeType]
-      })
-    } catch {
+      g.setNodeAttribute(address, 'badges', [...g.getNodeAttribute(address, "badges"), badgeType])
+    } catch (e) {
+      console.log(e)
     }
   }
 
@@ -456,11 +472,13 @@ export async function checkForNewVerifications(address: string, g: UndirectedGra
     data: {
       whiteListTimestamp: dayjs().unix(),
       elo: g.getNodeAttribute(address, "elo"),
+      ensName: g.getNodeAttribute(address, "ensName"),
+      ensAvatar: g.getNodeAttribute(address, "ensAvatar"),
     }
   });
 }
 
-export async function getENSName(address: string) {
+export async function getENS(address: string) {
   try {
     const provider = new ethers.JsonRpcProvider(
       `https://eth-mainnet.g.alchemy.com/v2/${process.env.REACT_APP_ALCHEMY_API_KEY}`,
@@ -469,9 +487,14 @@ export async function getENSName(address: string) {
         staticNetwork: new ethers.Network("mainnet", 1),
       }
     );
-    return await provider.lookupAddress(address);
+    const name = await provider.lookupAddress(address);
+    if (!name) return {avatar: null, name: null};
+
+    const avt = new AvatarResolver(provider);
+    const avatar = await avt.getAvatar(name, {});
+    return {avatar, name};
   } catch (e) {
     console.log(e)
-    return null;
+    return {avatar: null, name: null};
   }
 }

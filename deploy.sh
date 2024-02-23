@@ -9,4 +9,4 @@ echo "Sync completed."
 
 
 # Restart pm2 on target machine
-ssh root@149.28.39.24 ". ~/.nvm/nvm.sh && . ~/.profile &&. ~/.bashrc  && pm2 restart ~/rps-backend/ecosystem.config.js"
+ssh root@149.28.39.24 ". ~/.nvm/nvm.sh && . ~/.profile &&. ~/.bashrc && cd rps-backend &&npx prisma db push && pm2 restart ~/rps-backend/ecosystem.config.js"

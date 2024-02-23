@@ -107,4 +107,5 @@ export type LeaderboardPlayer = {
   elo: number;
   badges: string[];
   ensName?: string;
+  ensAvatar?: string;
 }

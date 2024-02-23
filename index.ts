@@ -26,7 +26,7 @@ import {
   STATUS_PLAYER1_WIN,
   STATUS_PLAYER2_WIN,
   insertToLeaderboard,
-  signGameFinalization, checkForNewVerifications
+  signGameFinalization, checkForNewVerifications, addresses
 } from "./utils";
 import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
@@ -419,7 +419,8 @@ app.post('/revealMany', async (req, res) => {
         }
       })
     }
-  } catch {
+  } catch (e){
+    console.log(e)
   }
 
   res.json({})
@@ -460,7 +461,13 @@ app.post('/myGames', async (req, res) => {
 
   const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
 
-  res.json({games: games, elo: myStats.elo, badges: graph.getNodeAttribute(address, 'badges')});
+  res.json({
+    games: games,
+    elo: myStats.elo,
+    badges: graph.getNodeAttribute(address, 'badges'),
+    ensName: myStats.ensName,
+    ensAvatar: myStats.ensAvatar
+  });
 });
 
 
@@ -534,6 +541,7 @@ const filterPlayerObject = {
     address: true,
     elo: true,
     ensName: true,
+    ensAvatar: true,
     whiteListAttestations: {
       select: {
         type: true,
@@ -593,7 +601,8 @@ app.post('/globalLeaderboard', async (req, res) => {
     elo: player.elo,
     address: player.address,
     badges: player.whiteListAttestations.map(elem => elem.type),
-    ensName: player.ensName
+    ensName: player.ensName,
+    ensAvatar: player.ensAvatar
   })))
 })
 
@@ -610,12 +619,12 @@ app.post('/localLeaderboard', async (req, res) => {
     if (depth > 1) {
       return true;
     } else {
-      console.log(attr)
       insertToLeaderboard(leaderboard, {
         address: node,
         elo: attr.elo,
         badges: attr.badges,
-        ensName: attr.ensName || null
+        ensName: attr.ensName || null,
+        ensAvatar: attr.ensAvatar || null
       }, 30);
       return false;
     }
@@ -625,13 +634,13 @@ app.post('/localLeaderboard', async (req, res) => {
     elo: elem.elo,
     address: elem.address,
     badges: elem.badges || [],
-    ensName: elem.ensName
+    ensName: elem.ensName,
+    ensAvatar: elem.ensAvatar
   })))
 })
 
 app.post('/localGraph', async (req, res) => {
   const {address} = req.body;
-  console.log(address)
   if (typeof address !== 'string' || !graph.hasNode(address)) {
     res.json({
       nodes: [],
@@ -644,7 +653,6 @@ app.post('/localGraph', async (req, res) => {
     if (depth > 1) {
       return true;
     } else {
-      console.log(node)
       nodes.push(node);
       return false;
     }
@@ -673,9 +681,13 @@ app.post('/checkForBadges', async (req, res) => {
 const outerRoute = express()
 outerRoute.use('/api', app);
 
-outerRoute.listen(port, async () => {
+async function listen() {
   await loadGraph(graph)
-  console.log(` app listening on port ${port}`)
-})
+  outerRoute.listen(port, async () => {
+    console.log(` app listening on port ${port}`)
+  })
+}
+
+listen()
 
 runCron(graph);

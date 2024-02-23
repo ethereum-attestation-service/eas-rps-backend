@@ -18,34 +18,37 @@ export async function updateNode(player: string, elo: number, g: UndirectedGraph
 
   g.mergeNode(player, {
     elo,
-    badges: g.getNodeAttribute(player, "badges"),
-    ensName: g.getNodeAttribute(player, "ensName")
+    ...g.getNodeAttributes(player)
   });
 }
 
 export async function loadGraph(g: UndirectedGraph) {
-  const allEdges = await prisma.link.findMany({
+  const allNodes = await prisma.player.findMany({
     include: {
-      player1Object: {
-        select: {
-          elo: true,
-          ensName: true,
-          whiteListAttestations: {
-            select: {
-              type: true,
-            }
-          }
-        },
-      },
+      whiteListAttestations: true
+    }
+  });
+  for (const node of allNodes) {
+    g.mergeNode(node.address, {
+      elo: node.elo,
+      ensName: node.ensName,
+      ensAvatar: node.ensAvatar,
+      badges: node.whiteListAttestations.map(attestation => attestation.type),
+    });
+  }
+
+
+  const allEdges = await prisma.link.findMany({
+    select: {
+      player1: true,
+      player2: true
+    },
+    where: {
+      default: true
     }
   });
 
   for (const edge of allEdges) {
-    g.mergeNode(edge.player1, {
-      elo: edge.player1Object.elo,
-      badges: edge.player1Object.whiteListAttestations.map(elem => elem.type),
-      ensName: edge.player1Object.ensName
-    });
     g.mergeEdge(edge.player1, edge.player2);
   }
 }
@@ -82,13 +85,21 @@ export async function addLink(player1: string, player2: string, g: UndirectedGra
     const [node1, node2] = [player1, player2].map(player => g.getNodeAttributes(player));
 
     if (!node1.elo && node1.elo !== 0) {
-      g.setNodeAttribute(player1, "elo", 0);
-      g.setNodeAttribute(player1, "ensName", ens1);
+      g.mergeNode(player1, {
+        elo: 0,
+        ensName: ens1.name,
+        ensAvatar: ens1.avatar,
+        badges: [],
+      })
     }
 
     if (!node2.elo && node2.elo !== 0) {
-      g.setNodeAttribute(player2, "elo", 0);
-      g.setNodeAttribute(player2, "ensName", ens2);
+      g.mergeNode(player2, {
+        elo: 0,
+        ensName: ens2.name,
+        ensAvatar: ens2.avatar,
+        badges: [],
+      })
     }
   }
 }
