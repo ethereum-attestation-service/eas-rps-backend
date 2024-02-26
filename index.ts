@@ -26,7 +26,7 @@ import {
   STATUS_PLAYER1_WIN,
   STATUS_PLAYER2_WIN,
   insertToLeaderboard,
-  signGameFinalization, checkForNewVerifications, addresses
+  signGameFinalization, checkForNewVerifications
 } from "./utils";
 import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
@@ -98,9 +98,11 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
       })
 
     } else if (attestation.sig.message.schema === CUSTOM_SCHEMAS.COMMIT_HASH) {
-      const schemaEncoder = new SchemaEncoder("bytes32 commitHash");
+      const schemaEncoder = new SchemaEncoder("bytes32 commitHash,bytes encryptedChoice");
 
-      const commitHash = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
+      const decoded = schemaEncoder.decodeData(attestation.sig.message.data)
+      const commitHash = decoded[0].value.value.toString();
+      const encryptedChoice = decoded[1].value.value.toString();
       const gameID = attestation.sig.message.refUID;
 
       const players = await prisma.game.findUnique({
@@ -121,20 +123,24 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         await prisma.game.update({
           where: {
             uid: gameID,
+            commit1: ZERO_BYTES32,
           },
           data: {
             commit1: commitHash,
             updatedAt: dayjs().unix(),
+            encryptedChoice1: encryptedChoice
           }
         })
       } else if (attestation.signer === players.player2) {
         await prisma.game.update({
           where: {
             uid: gameID,
+            commit2: ZERO_BYTES32,
           },
           data: {
             commit2: commitHash,
             updatedAt: dayjs().unix(),
+            encryptedChoice2: encryptedChoice
           }
         })
       }
@@ -169,7 +175,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
     }
 
     await prisma.attestation.create({
-      data: dbFriendlyAttestation(attestation)
+      data: dbFriendlyAttestation(attestation),
     })
 
     const result: StoreIPFSActionReturn = {
@@ -178,8 +184,8 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
       offchainAttestationId: attestation.sig.uid
     }
     res.json(result)
-  } catch {
-    res.json({error: 'Your attestation was verified, but not indexed.'})
+  } catch (e) {
+    res.json({error: `Your attestation was verified, but not indexed. ${e}`})
   }
 })
 
@@ -306,6 +312,10 @@ app.post('/gamesPendingReveal', async (req, res) => {
   const games = await prisma.game.findMany({
     select: {
       uid: true,
+      encryptedChoice1: true,
+      encryptedChoice2: true,
+      player1: true,
+      player2: true,
     },
     where: {
       commit1: {
@@ -329,8 +339,11 @@ app.post('/gamesPendingReveal', async (req, res) => {
     },
   });
 
-  res.json(games.map((game) => game.uid))
-
+  res.json(games.map(game => ({
+    uid: game.uid,
+    encryptedChoice: game.player1 === address ?
+      game.encryptedChoice1 : game.encryptedChoice2
+  })))
 })
 
 
@@ -419,7 +432,7 @@ app.post('/revealMany', async (req, res) => {
         }
       })
     }
-  } catch (e){
+  } catch (e) {
     console.log(e)
   }
 
@@ -442,11 +455,33 @@ app.post('/myGames', async (req, res) => {
           declined: false,
           finalized: finalized,
         },
+        include: {
+          player2Object: {
+            include: {
+              whiteListAttestations: {
+                select: {
+                  type: true,
+                }
+              }
+            }
+          },
+        }
       },
       gamesPlayedAsPlayer2: {
         where: {
           declined: false,
           finalized: finalized,
+        },
+        include: {
+          player1Object: {
+            include: {
+              whiteListAttestations: {
+                select: {
+                  type: true,
+                }
+              }
+            }
+          },
         }
       },
     }
@@ -456,8 +491,22 @@ app.post('/myGames', async (req, res) => {
     return
   }
 
-  const player1Games = myStats.gamesPlayedAsPlayer1
-  const player2Games = myStats.gamesPlayedAsPlayer2
+  const player1Games = myStats.gamesPlayedAsPlayer1.map(game => ({
+    ...game,
+    player1Object: {
+      ...game.player2Object,
+      badges: game.player2Object.whiteListAttestations.map(attestation => attestation.type)
+    },
+    player2Object: undefined
+  }))
+  const player2Games = myStats.gamesPlayedAsPlayer2.map(game => ({
+    ...game,
+    player1Object: {
+      ...game.player1Object,
+      badges: game.player1Object.whiteListAttestations.map(attestation => attestation.type)
+    },
+    player2Object: undefined
+  }))
 
   const games = player1Games.concat(player2Games).sort((a, b) => b.updatedAt - a.updatedAt);
 

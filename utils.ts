@@ -8,6 +8,7 @@ import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
 import {ethers} from "ethers";
 import axios from "axios";
 import {AvatarResolver, utils as avtUtils} from '@ensdomains/ens-avatar';
+import { CURRENT_CONFIG } from "./verifyAttestation";
 
 
 const prisma = new PrismaClient();
@@ -26,7 +27,7 @@ export const CUSTOM_SCHEMAS = {
 export const RPS_GAME_UID =
   "0x9a3b8beb51629e4624923863231c3931f466e79dac4d7c7f2d0e346240e66a72";
 
-export const EAS_CONTRACT_ADDRESS = "0xC2679fBD37d54388Ce493F1DB75320D236e1815e";
+export const EAS_CONTRACT_ADDRESS = CURRENT_CONFIG.contractAddress;
 
 export const CHOICE_UNKNOWN = 3;
 
