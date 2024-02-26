@@ -8,14 +8,14 @@ import {EAS, SchemaEncoder} from "@ethereum-attestation-service/eas-sdk";
 import {ethers} from "ethers";
 import axios from "axios";
 import {AvatarResolver, utils as avtUtils} from '@ensdomains/ens-avatar';
-import { CURRENT_CONFIG } from "./verifyAttestation";
+import {CURRENT_CONFIG} from "./verifyAttestation";
 
 
 const prisma = new PrismaClient();
 
 export const CUSTOM_SCHEMAS = {
   COMMIT_HASH:
-    "0x2328029cfa84b9ea42f4e0e8fa24fbf66da07ceec0a925dd27370b9617b32d59",
+    "0x3ee426c18d2dce68267f5fd2050b82687b51608819d7c2503f6f0ff0ac5ca1c8",
   CREATE_GAME_CHALLENGE:
     "0x8f60d8dbd47e0a6953b0b1fd640359d249ba8f14c15c02bc5c6b642b0b888f37",
   DECLINE_GAME_CHALLENGE:
@@ -168,9 +168,9 @@ export function insertToLeaderboard(currList: LeaderboardPlayer[], newPlayer: Le
 
 
 export async function signGameFinalization(game: GameWithPlayersAndAttestations, abandoned: boolean) {
-  const eas = new EAS(EAS_CONTRACT_ADDRESS);
+  const eas = new EAS(CURRENT_CONFIG.contractAddress);
 // Signer must be an ethers-like signer.
-  const provider = new ethers.JsonRpcProvider("https://rpc.sepolia.org");
+  const provider = new ethers.JsonRpcProvider("https://ethereum-rpc.publicnode.com");
   const signer = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
 
   eas.connect(signer);
@@ -184,6 +184,7 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
     {name: "choice2", value: game.choice2, type: "uint8"},
     {name: "abandoned", value: abandoned, type: "bool"}
   ]);
+
 
   const offchain = await eas.getOffchain();
 

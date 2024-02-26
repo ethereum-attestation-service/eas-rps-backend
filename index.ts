@@ -54,6 +54,30 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         return
       }
 
+      const numActiveGames = await prisma.game.count({
+        where: {
+          OR: [
+            {
+              player1: attestation.signer,
+              player2: attestation.sig.message.recipient,
+            },
+            {
+              player1: attestation.sig.message.recipient,
+              player2: attestation.signer,
+            }
+          ],
+          declined: false,
+          finalized: false,
+          invalidated: false,
+          abandoned: false
+        }
+      });
+
+      if (numActiveGames >=5) {
+        res.json({error: 'You have too many active games with this player. Finish some before starting new ones.'})
+        return
+      }
+
       const schemaEncoder = new SchemaEncoder("string stakes");
       const stakes = (schemaEncoder.decodeData(attestation.sig.message.data))[0].value.value.toString();
 
@@ -302,7 +326,8 @@ app.post('/incomingChallenges', async (req, res) => {
     stakes: challenge.stakes,
     winstreak: winStreaks[idx],
     gameCount: gameCounts[idx],
-  })));
+  })).sort((a, b) =>
+    b.player1Object.whiteListAttestations.length - a.player1Object.whiteListAttestations.length));
 })
 
 
@@ -407,30 +432,39 @@ app.post('/revealMany', async (req, res) => {
         continue;
       }
 
-      const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
+      try {
+        const [eloChange1, eloChange2, finalized] = await updateEloChangeIfApplicable(game, graph);
 
-      if (finalized) {
-        const finalizationAttestation = await signGameFinalization(game, false);
-        await prisma.attestation.create({
-          data: dbFriendlyAttestation(finalizationAttestation),
-        })
-      }
-
-      await prisma.game.update({
-        where: {
-          uid: reveal.uid
-        },
-        data: {
-          choice1: game.choice1,
-          choice2: game.choice2,
-          salt1: game.salt1,
-          salt2: game.salt2,
-          eloChange1: eloChange1,
-          eloChange2: eloChange2,
-          finalized: finalized,
-          updatedAt: dayjs().unix(),
+        if (finalized) {
+          const finalizationAttestation = await signGameFinalization(game, false);
+          await prisma.attestation.create({
+            data: dbFriendlyAttestation(finalizationAttestation),
+          })
         }
-      })
+
+        await prisma.game.update({
+          where: {
+            uid: reveal.uid
+          },
+          data: {
+            choice1: game.choice1,
+            choice2: game.choice2,
+            salt1: game.salt1,
+            salt2: game.salt2,
+            eloChange1: eloChange1,
+            eloChange2: eloChange2,
+            finalized: finalized,
+            updatedAt: dayjs().unix(),
+          }
+        })
+      } catch (e) {
+        if (hashedChoice === game.commit1) {
+          revealForbidden.delete(`${uid}1`);
+        } else if (hashedChoice === game.commit2) {
+          revealForbidden.delete(`${uid}2`);
+        }
+        console.log(e)
+      }
     }
   } catch (e) {
     console.log(e)
@@ -609,11 +643,19 @@ app.post('/ongoing', async (req, res) => {
       OR: [
         {
           player1: address,
-          choice1: CHOICE_UNKNOWN
+          OR: [{
+            choice1: CHOICE_UNKNOWN
+          }, {
+            choice2: CHOICE_UNKNOWN
+          }]
         },
         {
           player2: address,
-          choice2: CHOICE_UNKNOWN,
+          OR: [{
+            choice1: CHOICE_UNKNOWN
+          }, {
+            choice2: CHOICE_UNKNOWN
+          }],
           commit2: {
             not: ZERO_BYTES32
           }
@@ -621,6 +663,8 @@ app.post('/ongoing', async (req, res) => {
       ],
       declined: false,
       invalidated: false,
+      abandoned: false,
+      finalized: false
     },
     include: {
       player1Object: filterPlayerObject,
