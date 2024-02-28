@@ -61,6 +61,7 @@ export function dbFriendlyAttestation(attestation: AttestationShareablePackageOb
     gameUID: attestation.sig.message.schema === CUSTOM_SCHEMAS.CREATE_GAME_CHALLENGE ? attestation.sig.uid : attestation.sig.message.refUID,
     onChainTimestamp: 0,
     packageObjString: JSON.stringify(attestation),
+    timestamp: dayjs().unix(),
   }
 }
 
@@ -171,7 +172,9 @@ export async function signGameFinalization(game: GameWithPlayersAndAttestations,
   const eas = new EAS(CURRENT_CONFIG.contractAddress);
 // Signer must be an ethers-like signer.
   const provider = new ethers.JsonRpcProvider("https://ethereum-rpc.publicnode.com");
-  const signer = new ethers.Wallet(ethers.Wallet.createRandom().privateKey, provider);
+
+  console.log(process.env.PRIVATE_KEY)
+  const signer = new ethers.Wallet(process.env.PRIVATE_KEY!, provider);
 
   eas.connect(signer);
 // Initialize SchemaEncoder with the schema string

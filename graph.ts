@@ -16,10 +16,17 @@ export async function updateNode(player: string, elo: number, g: UndirectedGraph
     },
   });
 
-  g.mergeNode(player, {
-    elo,
-    ...g.getNodeAttributes(player)
-  });
+  if (!g.hasNode(player)) {
+    g.addNode(player, {
+      elo,
+      ensName: null,
+      ensAvatar: null,
+      badges: [],
+    });
+  }
+
+  g.setNodeAttribute(player, 'elo', elo);
+
 }
 
 export async function loadGraph(g: UndirectedGraph) {

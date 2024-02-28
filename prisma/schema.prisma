@@ -49,6 +49,7 @@ model Attestation {
   relevantTo       Game    @relation(fields: [gameUID], references: [uid])
   packageObjString String
   onChainTimestamp Int     @default(0)
+  timestamp        Int     @default(0)
 }
 
 model WhitelistAttestation {

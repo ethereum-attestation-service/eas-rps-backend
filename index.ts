@@ -223,6 +223,7 @@ app.post('/gameStatus', async (req, res) => {
     include: {
       relevantAttestations: {
         select: {
+          timestamp: true,
           packageObjString: true,
         }
       },
