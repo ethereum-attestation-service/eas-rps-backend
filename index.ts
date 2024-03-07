@@ -710,7 +710,7 @@ app.post('/localLeaderboard', async (req, res) => {
   }
   let leaderboard: LeaderboardPlayer[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
-    if (depth > 1) {
+    if (depth > 2) {
       return true;
     } else {
       insertToLeaderboard(leaderboard, {
@@ -744,7 +744,7 @@ app.post('/localGraph', async (req, res) => {
   }
   let nodes: string[] = [];
   bfsFromNode(graph, address, (node, attr, depth) => {
-    if (depth > 1) {
+    if (depth > 2) {
       return true;
     } else {
       nodes.push(node);
@@ -778,7 +778,7 @@ outerRoute.use('/api', app);
 async function listen() {
   await loadGraph(graph)
   outerRoute.listen(port, async () => {
-    console.log(` app listening on port ${port}`)
+    console.log(`app listening on port ${port}`)
   })
 }
 

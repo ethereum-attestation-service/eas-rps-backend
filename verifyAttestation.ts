@@ -1,10 +1,9 @@
 import {
   AttestationShareablePackageObject, EAS,
-  Offchain, SignedOffchainAttestation, SignedOffchainAttestationV1,
+  Offchain,
 } from "@ethereum-attestation-service/eas-sdk";
 import {PrismaClient} from "@prisma/client";
 import dayjs, {Dayjs} from "dayjs";
-import exp from "node:constants";
 
 const prisma = new PrismaClient();
 
@@ -40,7 +39,7 @@ export const EAS_CONFIG = {
 };
 
 function timestampsWithinTwoMinutesOfServer(time: Dayjs) {
-  return dayjs().diff(time, "minute") < 2;
+  return dayjs().diff(time, "hour") < 5;
 }
 
 
