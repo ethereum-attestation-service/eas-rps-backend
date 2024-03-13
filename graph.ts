@@ -1,9 +1,8 @@
 import {PrismaClient} from "@prisma/client";
-
-const prisma = new PrismaClient();
-
 import {UndirectedGraph} from "graphology";
 import {createPlayerIfDoesntExistAndReturnENS} from "./utils";
+
+const prisma = new PrismaClient();
 
 
 export async function updateNode(player: string, elo: number, g: UndirectedGraph) {

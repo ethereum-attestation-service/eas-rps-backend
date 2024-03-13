@@ -7,15 +7,9 @@ import {
   SchemaEncoder, AttestationShareablePackageObject, ZERO_BYTES32
 } from "@ethereum-attestation-service/eas-sdk";
 import dayjs from "dayjs";
-
 import {PrismaClient} from "@prisma/client";
-
-const prisma = new PrismaClient();
 import {UndirectedGraph} from "graphology";
 import {subgraph} from "graphology-operators";
-
-const graph = new UndirectedGraph();
-
 import {
   updateEloChangeIfApplicable,
   CHOICE_UNKNOWN,
@@ -32,6 +26,9 @@ import {ethers} from 'ethers';
 import {loadGraph, addLink} from "./graph";
 import {bfsFromNode} from "graphology-traversal";
 import {runCron} from "./cron";
+
+const prisma = new PrismaClient();
+const graph = new UndirectedGraph();
 
 const app = express()
 const port = 8080
@@ -73,7 +70,7 @@ app.post('/newAttestation', verificationMiddleware, async (req, res) => {
         }
       });
 
-      if (numActiveGames >=5) {
+      if (numActiveGames >= 5) {
         res.json({error: 'You have too many active games with this player. Finish some before starting new ones.'})
         return
       }

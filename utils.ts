@@ -93,7 +93,6 @@ function calculateEloScore(player1Elo: number, player2Elo: number, result: numbe
       break;
   }
 
-  // if (typeof S1 === "undefined" || typeof S2 === "undefined") throw new Error("Invalid result");
   // New Elo rating calculation
   const newElo1 = player1Elo + K * (S1! - E1);
   const newElo2 = player2Elo + K * (S2! - E2);
