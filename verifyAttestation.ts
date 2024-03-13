@@ -19,17 +19,6 @@ const MAINNET_CONFIG = {
   rpcProvider: `https://mainnet.infura.io/v3/`,
 }
 
-const SEPOLIA_CONFIG = {
-  chainId: 11155111,
-  chainName: "sepolia",
-  subdomain: "sepolia.",
-  version: "0.26",
-  contractAddress: "0xC2679fBD37d54388Ce493F1DB75320D236e1815e",
-  schemaRegistryAddress: "0x0a7E2Ff54e76B8E6659aedc9103FB21c038050D0",
-  etherscanURL: "https://sepolia.etherscan.io",
-  contractStartBlock: 2958570,
-}
-
 export const CURRENT_CONFIG = MAINNET_CONFIG
 
 export const EAS_CONFIG = {

@@ -34,12 +34,11 @@ export const STATUS_PLAYER1_WIN = 1;
 export const STATUS_PLAYER2_WIN = 2;
 
 export const STATUS_UNKNOWN = 3;
-// export const STATUS_INVALID = 4;
-//
-// export const RESULT_DRAW = 0;
-// export const RESULT_WIN = 1;
-// export const RESULT_LOSS = 2;
+// STATUS_INVALID: 4
 
+// RESULT_DRAW: 0 (myChoice-opponentChoice)%3 == 0
+// RESULT_WIN: 1 (myChoice-opponentChoice)%3 == 1
+// RESULT_LOSS: 2 (myChoice-opponentChoice)%3 == 2
 
 // @ts-ignore
 BigInt.prototype.toJSON = function () {
